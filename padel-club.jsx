@@ -170,13 +170,32 @@ function PSel({players,value,onChange,allSel,myVal}){
 function TeamTab({players,setPlayers,games}){
   const[name,setName]=useState("");
   const[color,setColor]=useState(COLORS[0]);
+  const[editing,setEditing]=useState(null);
   const add=()=>{if(!name.trim())return;setPlayers(p=>[...p,{id:uid(),name:name.trim(),color}]);setName("");};
   const del=id=>{if(games.some(g=>[...g.team1,...g.team2].includes(id))){alert("Jogador tem jogos registados.");return;}setPlayers(p=>p.filter(x=>x.id!==id));};
   const gs=id=>{let w=0,g=0;games.forEach(gm=>{if(![...gm.team1,...gm.team2].includes(id))return;g++;const wn=calcWinner(gm.sets);if((gm.team1.includes(id)&&wn===1)||(gm.team2.includes(id)&&wn===2))w++;});return{w,g};};
+  const startEdit=p=>setEditing({id:p.id,name:p.name,color:p.color});
+  const saveEdit=()=>{if(!editing.name.trim())return;setPlayers(p=>p.map(x=>x.id===editing.id?{...x,name:editing.name.trim(),color:editing.color}:x));setEditing(null);};
   return(
     <div className="scr">
       <div className="ft">Jogadores</div>
-      <div className="pg">{players.map(p=>{const s=gs(p.id);return(<div key={p.id} className="pc"><div className="pcav" style={{background:p.color}}>{p.name[0].toUpperCase()}</div><div className="pci"><div className="pcn">{p.name}</div><div className="pcs">{s.g} jogos · {s.w} vitórias</div></div><button className="pcd" onClick={()=>del(p.id)}>✕</button></div>);})}</div>
+      <div className="pg">{players.map(p=>{
+        const s=gs(p.id);
+        if(editing?.id===p.id) return(
+          <div key={p.id} className="pc pce">
+            <div className="pcav" style={{background:editing.color}}>{editing.name[0]?.toUpperCase()||"?"}</div>
+            <div className="pci pef">
+              <input className="fi pei" value={editing.name} onChange={e=>setEditing(v=>({...v,name:e.target.value}))} onKeyDown={e=>{if(e.key==="Enter")saveEdit();if(e.key==="Escape")setEditing(null);}} autoFocus/>
+              <div className="cp" style={{marginTop:8}}>{COLORS.map(c=><button key={c} className={`cd${editing.color===c?" cda":""}`} style={{background:c}} onClick={()=>setEditing(v=>({...v,color:c}))}/>)}</div>
+              <div className="pea">
+                <button className="btnc peb" onClick={()=>setEditing(null)}>Cancelar</button>
+                <button className="btns peb" onClick={saveEdit}>Guardar</button>
+              </div>
+            </div>
+          </div>
+        );
+        return(<div key={p.id} className="pc"><div className="pcav" style={{background:p.color}}>{p.name[0].toUpperCase()}</div><div className="pci"><div className="pcn">{p.name}</div><div className="pcs">{s.g} jogos · {s.w} vitórias</div></div><button className="pcd" title="Editar" onClick={()=>startEdit(p)}>✏️</button><button className="pcd" onClick={()=>del(p.id)}>✕</button></div>);
+      })}</div>
       <div className="fg" style={{marginTop:24}}>
         <label className="fl">➕ Adicionar Jogador</label>
         <input className="fi" placeholder="Nome do jogador" value={name} onChange={e=>setName(e.target.value)} onKeyDown={e=>e.key==="Enter"&&add()}/>
@@ -329,6 +348,11 @@ select option{background:var(--card2);}
 .cp{display:flex;gap:7px;flex-wrap:wrap;}
 .cd{width:26px;height:26px;border-radius:50%;border:2px solid transparent;cursor:pointer;}
 .cda{border-color:#fff;transform:scale(1.2);}
+.pce{flex-direction:column;align-items:stretch;gap:0;}
+.pef{width:100%;}
+.pei{padding:7px 10px;font-size:13px;margin-bottom:0;}
+.pea{display:flex;gap:8px;margin-top:10px;}
+.peb{flex:1;padding:8px;font-size:12px;}
 .cscr{display:flex;gap:6px;overflow-x:auto;padding-bottom:12px;scrollbar-width:none;margin-bottom:16px;}
 .cscr::-webkit-scrollbar{display:none;}
 .catb{padding:5px 12px;border-radius:20px;border:1px solid var(--bd);background:transparent;color:var(--mt);font-size:11px;font-weight:500;cursor:pointer;white-space:nowrap;font-family:'Outfit',sans-serif;flex-shrink:0;}
