@@ -5,9 +5,13 @@ const COLORS = ["#00e676","#ff6b35","#00b0ff","#e040fb","#ffea00","#ff4444","#00
 const uid = () => Math.random().toString(36).slice(2,10);
 const today = () => new Date().toISOString().slice(0,10);
 
-// Campo por defeito criado no primeiro arranque. Id estável "mesh"
-// para coincidir com o backfill aplicado aos jogos existentes na BD.
 const MESH_CAMPO = {id:"mesh",name:"Mesh"};
+
+const THEMES=[
+  {id:"dark",  name:"Dark",  icon:"🌙", desc:"Azul escuro com verde néon"},
+  {id:"blue",  name:"Azul",  icon:"🟦", desc:"Campo azul com padrão diamante"},
+  {id:"green", name:"Verde", icon:"🟩", desc:"Campo verde com linhas brancas"},
+];
 
 function calcWinner(sets){
   let a=0,b=0;
@@ -37,6 +41,8 @@ export default function App(){
   const[games,setGames]=useState([]);
   const[campos,setCamposState]=useState([]);
   const[defaultCampo,setDefaultCampoState]=useState("");
+  // Lazy init so theme applies on first paint, before useEffect runs
+  const[theme,setThemeState]=useState(()=>localStorage.getItem('padel_theme')||"dark");
   const[loading,setLoading]=useState(true);
   const[edit,setEdit]=useState(null);
 
@@ -51,25 +57,17 @@ export default function App(){
       if(gm)setGames(gm);
       const sc=localStorage.getItem('padel_campos');
       const sd=localStorage.getItem('padel_default_campo');
-      if(sc){
-        setCamposState(JSON.parse(sc));
-      }else{
-        // Seed inicial: cria o campo "Mesh" por defeito
-        setCamposState([MESH_CAMPO]);
-        localStorage.setItem('padel_campos',JSON.stringify([MESH_CAMPO]));
-      }
-      if(sd){
-        setDefaultCampoState(sd);
-      }else{
-        setDefaultCampoState(MESH_CAMPO.id);
-        localStorage.setItem('padel_default_campo',MESH_CAMPO.id);
-      }
+      if(sc){setCamposState(JSON.parse(sc));}
+      else{setCamposState([MESH_CAMPO]);localStorage.setItem('padel_campos',JSON.stringify([MESH_CAMPO]));}
+      if(sd){setDefaultCampoState(sd);}
+      else{setDefaultCampoState(MESH_CAMPO.id);localStorage.setItem('padel_default_campo',MESH_CAMPO.id);}
       setLoading(false);
     })();
   },[]);
 
   const setCampos=c=>{setCamposState(c);localStorage.setItem('padel_campos',JSON.stringify(c));};
   const setDefaultCampo=d=>{setDefaultCampoState(d);localStorage.setItem('padel_default_campo',d);};
+  const setTheme=t=>{setThemeState(t);localStorage.setItem('padel_theme',t);};
 
   const saveGame=async g=>{
     const{data}=await supabase.from('games').upsert(g).select().single();
@@ -98,8 +96,8 @@ export default function App(){
   };
 
   if(loading)return(
-    <div className="app"><style>{CSS}</style>
-      <div style={{display:'flex',alignItems:'center',justifyContent:'center',height:'100vh',flexDirection:'column',gap:12}}>
+    <div className="app" data-theme={theme}><style>{CSS}</style>
+      <div style={{display:'flex',alignItems:'center',justifyContent:'center',height:'100dvh',flexDirection:'column',gap:12}}>
         <div style={{fontSize:40}}>🎾</div>
         <div style={{color:'var(--mt)',fontSize:13,letterSpacing:1}}>A carregar...</div>
       </div>
@@ -107,7 +105,7 @@ export default function App(){
   );
 
   return(
-    <div className="app">
+    <div className="app" data-theme={theme}>
       <style>{CSS}</style>
       <header className="hdr">
         <div className="hl"><span className="hi">🎾</span><div><div className="hn">PADEL CLUB</div><div className="hb">powered by diogo azambuja</div></div></div>
@@ -117,7 +115,7 @@ export default function App(){
         {tab==="cal" &&<CalTab players={players} games={games} campos={campos}/>}
         {tab==="new" &&<NewTab players={players} initial={edit} onSave={saveGame} defaultCampo={defaultCampo} campos={campos} onCancel={()=>{setEdit(null);setTab("cal");}}/>}
         {tab==="stat"&&<StatsTab players={players} games={games}/>}
-        {tab==="cfg" &&<ConfigTab players={players} games={games} campos={campos} setCampos={setCampos} defaultCampo={defaultCampo} setDefaultCampo={setDefaultCampo} onAddPlayer={addPlayer} onSavePlayer={savePlayer} onDelPlayer={delPlayer} onEditGame={editGame} onDelGame={delGame}/>}
+        {tab==="cfg" &&<ConfigTab players={players} games={games} campos={campos} setCampos={setCampos} defaultCampo={defaultCampo} setDefaultCampo={setDefaultCampo} onAddPlayer={addPlayer} onSavePlayer={savePlayer} onDelPlayer={delPlayer} onEditGame={editGame} onDelGame={delGame} theme={theme} setTheme={setTheme}/>}
       </main>
       <nav className="nav">
         {[{id:"cal",i:"📅",l:"Jogos"},{id:"new",i:"➕",l:"Novo Jogo"},{id:"stat",i:"🏆",l:"Rankings"},{id:"cfg",i:"⚙️",l:"Config"}].map(({id,i,l})=>(
@@ -238,13 +236,15 @@ function NewTab({players,initial,onSave,onCancel,defaultCampo,campos}){
   const addSet=()=>setF(p=>({...p,sets:[...p.sets,{t1:"",t2:"",team1:["",""],team2:["",""]}]}));
   const remSet=i=>setF(p=>({...p,sets:p.sets.filter((_,j)=>j!==i)}));
   const setBeer=(pid,v)=>setF(p=>({...p,beers:{...p.beers,[pid]:Math.max(0,+v||0)}}));
-
   const toggleFixed=()=>setF(p=>({...p,jogadoresFixos:!isFixed,team1:["",""],team2:["",""],jogadores:[]}));
 
   const sorteio=()=>{
     if(isFixed){
-      const pool=[...players].sort(()=>Math.random()-.5).slice(0,4);
-      setF(p=>({...p,team1:[pool[0]?.id||"",pool[1]?.id||""],team2:[pool[2]?.id||"",pool[3]?.id||""]}));
+      // Usa apenas os jogadores já selecionados; só recorre à BD se nenhum estiver escolhido
+      const selected=[...f.team1,...f.team2].filter(Boolean);
+      const base=selected.length>0 ? selected : players.map(p=>p.id);
+      const pool=[...base].sort(()=>Math.random()-.5);
+      setF(p=>({...p,team1:[pool[0]||"",pool[1]||""],team2:[pool[2]||"",pool[3]||""]}));
     } else {
       const jogs=f.jogadores.filter(Boolean);
       if(jogs.length<4)return;
@@ -417,19 +417,40 @@ function Podium({data,players,pct}){
 }
 
 /* ── Config Tab ─────────────────────────────────────────── */
-function ConfigTab({players,games,campos,setCampos,defaultCampo,setDefaultCampo,onAddPlayer,onSavePlayer,onDelPlayer,onEditGame,onDelGame}){
+function ConfigTab({players,games,campos,setCampos,defaultCampo,setDefaultCampo,onAddPlayer,onSavePlayer,onDelPlayer,onEditGame,onDelGame,theme,setTheme}){
   const[sec,setSec]=useState("jogadores");
   return(
     <div className="scr">
       <div className="ft">Configurações</div>
       <div className="cscr" style={{marginBottom:20}}>
-        {[{id:"jogadores",l:"👥 Jogadores"},{id:"campos",l:"📍 Campos"},{id:"jogos",l:"🎾 Jogos"}].map(s=>(
+        {[{id:"jogadores",l:"👥 Jogadores"},{id:"campos",l:"📍 Campos"},{id:"tema",l:"🎨 Tema"},{id:"jogos",l:"🎾 Jogos"}].map(s=>(
           <button key={s.id} className={`catb${sec===s.id?" caton":""}`} onClick={()=>setSec(s.id)}>{s.l}</button>
         ))}
       </div>
       {sec==="jogadores"&&<PlayersSection players={players} games={games} onAdd={onAddPlayer} onSave={onSavePlayer} onDel={onDelPlayer}/>}
       {sec==="campos"&&<CamposSection campos={campos} setCampos={setCampos} defaultCampo={defaultCampo} setDefaultCampo={setDefaultCampo}/>}
+      {sec==="tema"&&<ThemeSection theme={theme} setTheme={setTheme}/>}
       {sec==="jogos"&&<GamesAdminSection games={games} players={players} onEdit={onEditGame} onDel={onDelGame}/>}
+    </div>
+  );
+}
+
+function ThemeSection({theme,setTheme}){
+  return(
+    <div>
+      <div style={{fontSize:12,color:'var(--mt)',marginBottom:16,letterSpacing:.3}}>Escolhe o aspeto visual da app. A alteração é imediata.</div>
+      <div style={{display:'flex',flexDirection:'column',gap:10}}>
+        {THEMES.map(t=>(
+          <button key={t.id} className={`theme-card${theme===t.id?" theme-on":""}`} onClick={()=>setTheme(t.id)}>
+            <div className={`theme-prev tp-${t.id}`}/>
+            <div style={{flex:1,textAlign:'left'}}>
+              <div style={{fontWeight:600,fontSize:14,color:'var(--t)',marginBottom:3}}>{t.icon} {t.name}</div>
+              <div style={{fontSize:11,color:'var(--mt)'}}>{t.desc}</div>
+            </div>
+            <span style={{color:theme===t.id?'var(--g)':'var(--bd)',fontSize:20,flexShrink:0}}>{theme===t.id?"✓":"○"}</span>
+          </button>
+        ))}
+      </div>
     </div>
   );
 }
@@ -497,7 +518,7 @@ function CamposSection({campos,setCampos,defaultCampo,setDefaultCampo}){
   };
   return(
     <div>
-      {campos.length===0&&<div className="empty" style={{minHeight:80}}><span className="es">Sem campos definidos.<br/>O campo por defeito aparece automaticamente em novos jogos.</span></div>}
+      {campos.length===0&&<div className="empty" style={{minHeight:80}}><span className="es">Sem campos definidos.</span></div>}
       <div className="pg">
         {campos.map(c=>(
           <div key={c.id} className="pc">
@@ -523,7 +544,7 @@ function GamesAdminSection({games,players,onEdit,onDel}){
   if(!games.length)return(<div className="empty" style={{minHeight:80}}><span className="es">Sem jogos registados</span></div>);
   return(
     <div>
-      <div style={{fontSize:11,color:'var(--r)',marginBottom:14,padding:'8px 12px',background:'rgba(255,68,68,.08)',borderRadius:8,border:'1px solid rgba(255,68,68,.2)'}}>
+      <div style={{fontSize:11,color:'var(--r)',marginBottom:14,padding:'8px 12px',background:'rgba(239,83,80,.08)',borderRadius:8,border:'1px solid rgba(239,83,80,.2)'}}>
         ⚠️ Editar ou anular jogos afeta os rankings e estatísticas
       </div>
       <div style={{display:'flex',flexDirection:'column',gap:8}}>
@@ -601,8 +622,43 @@ function fmtMo(d){const ms=["Jan","Fev","Mar","Abr","Mai","Jun","Jul","Ago","Set
 const CSS=`
 @import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Outfit:wght@300;400;500;600;700&display=swap');
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
-:root{--bg:#07101f;--card:#0d1a2e;--card2:#111f35;--bd:#1a2d47;--g:#00e676;--o:#ff6b35;--r:#ff4444;--t:#e0ecff;--mt:#4a6080;--rad:12px;}
+
+/* ── Themes ── */
+:root,[data-theme="dark"]{
+  --bg:#07101f;--card:#0d1a2e;--card2:#111f35;--bd:#1a2d47;
+  --g:#00e676;--o:#ff6b35;--r:#ff4444;--t:#e0ecff;--mt:#4a6080;
+  --g-rgb:0,230,118;--rad:12px;
+}
+[data-theme="blue"]{
+  --bg:#071828;--card:#0b2540;--card2:#0f2f50;--bd:#1a4070;
+  --g:#29b6f6;--o:#80deea;--r:#ef5350;--t:#e1f5fe;--mt:#5090c0;
+  --g-rgb:41,182,246;
+}
+[data-theme="green"]{
+  --bg:#071a07;--card:#0b2e0b;--card2:#0f3a0f;--bd:#1a5e1a;
+  --g:#69f0ae;--o:#ffd54f;--r:#ef5350;--t:#e8f5e9;--mt:#4a8a4a;
+  --g-rgb:105,240,174;
+}
+
+/* ── Court backgrounds ── */
 .app{display:flex;flex-direction:column;height:100vh;height:100dvh;background:var(--bg);font-family:'Outfit',sans-serif;color:var(--t);overflow:hidden;}
+[data-theme="blue"].app{
+  background:
+    linear-gradient(135deg,rgba(255,255,255,.018) 25%,transparent 25%),
+    linear-gradient(225deg,rgba(255,255,255,.018) 25%,transparent 25%),
+    linear-gradient(315deg,rgba(255,255,255,.018) 25%,transparent 25%),
+    linear-gradient(45deg,rgba(255,255,255,.018) 25%,transparent 25%),
+    linear-gradient(180deg,#071828 0%,#0e2a45 100%);
+  background-size:20px 20px,20px 20px,20px 20px,20px 20px,100% 100%;
+}
+[data-theme="green"].app{
+  background:
+    repeating-linear-gradient(0deg,transparent,transparent 79px,rgba(255,255,255,.04) 79px,rgba(255,255,255,.04) 80px),
+    repeating-linear-gradient(90deg,transparent,transparent 119px,rgba(255,255,255,.04) 119px,rgba(255,255,255,.04) 120px),
+    linear-gradient(180deg,#071a07 0%,#0d2e0d 100%);
+}
+
+/* ── Layout ── */
 .hdr{display:flex;align-items:center;justify-content:space-between;padding:14px 18px;background:var(--card);border-bottom:1px solid var(--bd);flex-shrink:0;}
 .hl{display:flex;align-items:center;gap:10px;}.hi{font-size:22px;}
 .hn{font-family:'Bebas Neue',sans-serif;font-size:20px;letter-spacing:2px;color:var(--g);}
@@ -615,13 +671,15 @@ const CSS=`
 .nb.on{color:var(--g);}.ni{font-size:17px;}.nl{font-size:10px;font-weight:500;letter-spacing:.3px;}
 .empty{display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:280px;gap:8px;padding:32px;text-align:center;}
 .et{font-size:17px;font-weight:600;}.es{font-size:13px;color:var(--mt);}
+
+/* ── Games list ── */
 .mhdr{font-family:'Bebas Neue',sans-serif;font-size:13px;letter-spacing:2px;color:var(--mt);padding:14px 2px 6px;}
 .gc{background:var(--card);border:1px solid var(--bd);border-radius:var(--rad);margin-bottom:10px;overflow:hidden;}
 .gct{display:flex;align-items:center;gap:10px;padding:13px 14px;cursor:pointer;}
 .gcd{font-size:11px;color:var(--mt);min-width:50px;flex-shrink:0;}
 .gm2{flex:1;display:flex;align-items:center;gap:6px;overflow:hidden;}
 .gt{flex:1;display:flex;align-items:center;gap:6px;padding:5px 8px;border-radius:8px;min-width:0;}
-.gt.gw{background:rgba(0,230,118,.1);border:1px solid rgba(0,230,118,.25);}
+.gt.gw{background:rgba(var(--g-rgb),.1);border:1px solid rgba(var(--g-rgb),.25);}
 .gtr{flex-direction:row-reverse;}
 .grot{flex:1;display:flex;align-items:center;gap:5px;overflow:hidden;}
 .gds{display:flex;gap:3px;flex-shrink:0;}.dot{width:8px;height:8px;border-radius:50%;display:inline-block;flex-shrink:0;}
@@ -643,6 +701,8 @@ const CSS=`
 .gacts{display:flex;gap:8px;margin-top:12px;}
 .abtn{padding:6px 13px;border-radius:8px;font-size:12px;cursor:pointer;font-family:'Outfit',sans-serif;border:1px solid;background:transparent;}
 .abtn.edit{border-color:var(--bd);color:var(--t);}.abtn.del{border-color:var(--r);color:var(--r);}.abtn.share{border-color:var(--bd);color:var(--t);}
+
+/* ── Forms ── */
 .ft{font-family:'Bebas Neue',sans-serif;font-size:24px;letter-spacing:2px;color:var(--g);margin-bottom:20px;}
 .fg{margin-bottom:18px;}
 .fl{display:block;font-size:11px;font-weight:600;color:var(--mt);letter-spacing:.8px;text-transform:uppercase;margin-bottom:8px;}
@@ -663,9 +723,9 @@ select option{background:var(--card2);}
 .tog-k{display:block;width:20px;height:20px;border-radius:50%;background:#fff;position:absolute;top:3px;left:3px;transition:left .2s;pointer-events:none;}
 .tog.ton .tog-k{left:23px;}
 .rot-pool{display:flex;flex-wrap:wrap;gap:7px;}
-.pool-btn{display:flex;align-items:center;gap:6px;padding:7px 12px;border-radius:20px;border:1px solid var(--bd);background:transparent;color:var(--mt);font-size:12px;cursor:pointer;font-family:'Outfit',sans-serif;transition:border-color .15s;}
+.pool-btn{display:flex;align-items:center;gap:6px;padding:7px 12px;border-radius:20px;border:1px solid var(--bd);background:transparent;color:var(--mt);font-size:12px;cursor:pointer;font-family:'Outfit',sans-serif;}
 .pool-btn.psel{background:var(--card2);}
-.sort-btn{margin-bottom:14px;border-color:rgba(0,230,118,.4);color:var(--g);}
+.sort-btn{margin-bottom:14px;border-color:rgba(var(--g-rgb),.45);color:var(--g);}
 .set-block{margin-bottom:12px;border:1px solid var(--bd);border-radius:10px;padding:12px;background:var(--card2);}
 .sir{display:flex;align-items:center;gap:7px;margin-bottom:7px;}
 .sil{font-size:11px;color:var(--mt);width:36px;flex-shrink:0;}
@@ -683,8 +743,10 @@ select option{background:var(--card2);}
 .fa{display:flex;gap:10px;margin-top:24px;}
 .btnc,.btns{flex:1;padding:12px;border-radius:10px;font-size:14px;font-weight:600;cursor:pointer;font-family:'Outfit',sans-serif;border:none;}
 .btnc{background:var(--card2);color:var(--mt);border:1px solid var(--bd);}
-.btns{background:var(--g);color:#000;}
+.btns{background:var(--g);color:var(--bg);}
 .btns:disabled{opacity:.4;cursor:not-allowed;}
+
+/* ── Players ── */
 .pg{display:flex;flex-direction:column;gap:7px;}
 .pc{display:flex;align-items:center;gap:11px;background:var(--card2);padding:11px 13px;border-radius:10px;}
 .pcav{width:38px;height:38px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-family:'Bebas Neue',sans-serif;font-size:17px;color:#000;flex-shrink:0;}
@@ -696,11 +758,15 @@ select option{background:var(--card2);}
 .pce{flex-direction:column;align-items:stretch;gap:0;}
 .pef{width:100%;}.pei{padding:7px 10px;font-size:13px;margin-bottom:0;}
 .pea{display:flex;gap:8px;margin-top:10px;}.peb{flex:1;padding:8px;font-size:12px;}
+
+/* ── Scrollable chips ── */
 .cscr{display:flex;gap:6px;overflow-x:auto;padding-bottom:8px;scrollbar-width:none;margin-bottom:16px;}
 .cscr::-webkit-scrollbar{display:none;}
 .catb{padding:5px 12px;border-radius:20px;border:1px solid var(--bd);background:transparent;color:var(--mt);font-size:11px;font-weight:500;cursor:pointer;white-space:nowrap;font-family:'Outfit',sans-serif;flex-shrink:0;}
-.catb.caton{background:var(--g);border-color:var(--g);color:#000;font-weight:700;}
+.catb.caton{background:var(--g);border-color:var(--g);color:var(--bg);font-weight:700;}
 .yr-btn{font-size:12px;padding:5px 14px;}
+
+/* ── Podium / Rankings ── */
 .pod{display:flex;align-items:flex-end;justify-content:center;gap:6px;height:210px;margin:16px 0;}
 .pcol{display:flex;flex-direction:column;align-items:center;flex:1;max-width:120px;}
 .pinf{text-align:center;margin-bottom:8px;flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;}
@@ -713,4 +779,25 @@ select option{background:var(--card2);}
 .rrd{width:9px;height:9px;border-radius:50%;flex-shrink:0;}
 .rrname{flex:1;font-size:13px;font-weight:500;}
 .rrv{font-family:'Bebas Neue',sans-serif;font-size:20px;color:var(--g);}
+
+/* ── Theme picker ── */
+.theme-card{display:flex;align-items:center;gap:14px;padding:13px 14px;background:var(--card);border:2px solid var(--bd);border-radius:var(--rad);cursor:pointer;width:100%;transition:border-color .15s;}
+.theme-card.theme-on{border-color:var(--g);}
+.theme-prev{width:60px;height:42px;border-radius:8px;flex-shrink:0;overflow:hidden;}
+.tp-dark{background:linear-gradient(135deg,#07101f 0%,#0d1a2e 60%,#00e676 60%,#00e676 100%);background-size:100% 100%;}
+.tp-blue{
+  background:
+    linear-gradient(135deg,rgba(255,255,255,.03) 25%,transparent 25%),
+    linear-gradient(225deg,rgba(255,255,255,.03) 25%,transparent 25%),
+    linear-gradient(315deg,rgba(255,255,255,.03) 25%,transparent 25%),
+    linear-gradient(45deg,rgba(255,255,255,.03) 25%,transparent 25%),
+    linear-gradient(135deg,#071828 0%,#1565c0 100%);
+  background-size:8px 8px,8px 8px,8px 8px,8px 8px,100% 100%;
+}
+.tp-green{
+  background:
+    repeating-linear-gradient(0deg,transparent,transparent 9px,rgba(255,255,255,.07) 9px,rgba(255,255,255,.07) 10px),
+    repeating-linear-gradient(90deg,transparent,transparent 14px,rgba(255,255,255,.07) 14px,rgba(255,255,255,.07) 15px),
+    linear-gradient(135deg,#071a07 0%,#1b5e20 100%);
+}
 `;
