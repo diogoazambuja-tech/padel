@@ -5,6 +5,10 @@ const COLORS = ["#00e676","#ff6b35","#00b0ff","#e040fb","#ffea00","#ff4444","#00
 const uid = () => Math.random().toString(36).slice(2,10);
 const today = () => new Date().toISOString().slice(0,10);
 
+// Campo por defeito criado no primeiro arranque. Id estável "mesh"
+// para coincidir com o backfill aplicado aos jogos existentes na BD.
+const MESH_CAMPO = {id:"mesh",name:"Mesh"};
+
 function calcWinner(sets){
   let a=0,b=0;
   (sets||[]).forEach(s=>{const t1=+s.t1||0,t2=+s.t2||0;if(t1>t2)a++;else if(t2>t1)b++;});
@@ -47,8 +51,19 @@ export default function App(){
       if(gm)setGames(gm);
       const sc=localStorage.getItem('padel_campos');
       const sd=localStorage.getItem('padel_default_campo');
-      if(sc)setCamposState(JSON.parse(sc));
-      if(sd)setDefaultCampoState(sd);
+      if(sc){
+        setCamposState(JSON.parse(sc));
+      }else{
+        // Seed inicial: cria o campo "Mesh" por defeito
+        setCamposState([MESH_CAMPO]);
+        localStorage.setItem('padel_campos',JSON.stringify([MESH_CAMPO]));
+      }
+      if(sd){
+        setDefaultCampoState(sd);
+      }else{
+        setDefaultCampoState(MESH_CAMPO.id);
+        localStorage.setItem('padel_default_campo',MESH_CAMPO.id);
+      }
       setLoading(false);
     })();
   },[]);
@@ -338,6 +353,7 @@ function NewTab({players,initial,onSave,onCancel,defaultCampo,campos}){
               <div className="bc3"><button className="bcb" onClick={()=>setBeer(pid,(f.beers[pid]||0)-1)}>−</button><span className="bcn">{f.beers[pid]||0}</span><button className="bcb" onClick={()=>setBeer(pid,(f.beers[pid]||0)+1)}>+</button></div>
             </div>
           );})}
+          </div>
         </div>
       )}
 
