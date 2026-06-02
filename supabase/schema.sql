@@ -10,8 +10,11 @@ create table players (
 create table games (
   id text primary key,
   date text not null,
+  campo text default '',
+  "jogadoresFixos" boolean default true,
   team1 jsonb not null default '[]',
   team2 jsonb not null default '[]',
+  jogadores jsonb not null default '[]',
   sets jsonb not null default '[]',
   beers jsonb not null default '{}',
   created_at timestamptz default now()
