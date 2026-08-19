@@ -19,6 +19,16 @@ function calcWinner(sets){
   return a>b?1:b>a?2:0;
 }
 
+// Sorteio de equipas: mantém os jogadores já selecionados, completa até 4
+// com aleatórios da base, e baralha os 4 pelos dois lados.
+// 4 selecionados → baralha só esses; 1-3 → esses + aleatórios; 0 → 4 aleatórios.
+function drawTeams(players,selectedIds){
+  const sel=[...new Set(selectedIds.filter(Boolean))];
+  const rest=players.map(p=>p.id).filter(id=>!sel.includes(id)).sort(()=>Math.random()-.5);
+  const pool=[...sel,...rest].slice(0,4).sort(()=>Math.random()-.5);
+  return{team1:[pool[0]||"",pool[1]||""],team2:[pool[2]||"",pool[3]||""]};
+}
+
 const DEMO=[
   {id:"p1",name:"Diogo Azambuja",color:COLORS[0]},
   {id:"p2",name:"Filipe Cerqueira",color:COLORS[1]},
@@ -241,11 +251,8 @@ function NewTab({players,initial,onSave,onCancel,defaultCampo,campos}){
 
   const sorteio=()=>{
     if(isFixed){
-      // Usa apenas os jogadores já selecionados; só recorre à BD se nenhum estiver escolhido
-      const selected=[...f.team1,...f.team2].filter(Boolean);
-      const base=selected.length>0 ? selected : players.map(p=>p.id);
-      const pool=[...base].sort(()=>Math.random()-.5);
-      setF(p=>({...p,team1:[pool[0]||"",pool[1]||""],team2:[pool[2]||"",pool[3]||""]}));
+      const d=drawTeams(players,[...f.team1,...f.team2]);
+      setF(p=>({...p,team1:d.team1,team2:d.team2}));
     } else {
       const jogs=f.jogadores.filter(Boolean);
       if(jogs.length<4)return;
@@ -703,6 +710,9 @@ function LiveSetup({players,campos,defaultCampo,onStart}){
           <div className="tc"><div className="tch t2h">Equipa 2</div>{[0,1].map(i=><PSel key={i} players={players} value={team2[i]} onChange={v=>setT(setTeam2,team2,i,v)} allSel={allSel} myVal={team2[i]}/>)}</div>
         </div>
       </div>
+      {players.length>=4&&(
+        <button className="aset sort-btn" onClick={()=>{const d=drawTeams(players,[...team1,...team2]);setTeam1(d.team1);setTeam2(d.team2);}}>🎲 Sortear Equipas</button>
+      )}
       {campos.length>0&&(
         <div className="fg"><label className="fl">📍 Campo</label>
           <select className="fi" style={{cursor:'pointer'}} value={campo} onChange={e=>setCampo(e.target.value)}>
