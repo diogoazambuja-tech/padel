@@ -734,6 +734,12 @@ function LiveTab({players,campos,defaultCampo,onSaveGame}){
   const[live,setLive]=useState(null);
   const[view,setView]=useState("lobby");
   const[ready,setReady]=useState(false);
+  // Refs para evitar races: toques rápidos partem sempre do log mais recente
+  // e o eco do Realtime não repõe estado antigo enquanto há escritas em curso.
+  const liveRef=useRef(null);
+  const pending=useRef(0);
+  const tapGuard=useRef(0);
+  useEffect(()=>{liveRef.current=live;},[live]);
 
   useEffect(()=>{
     let ch;
@@ -744,13 +750,31 @@ function LiveTab({players,campos,defaultCampo,onSaveGame}){
         .on('postgres_changes',{event:'*',schema:'public',table:'live_games'},p=>{
           const row=p.new;
           if(!row||!row.id)return;
-          if(row.status==='active')setLive(row);
+          if(row.status==='active'){
+            // Eco atrasado da nossa própria escrita: ignora enquanto houver pendentes
+            if(pending.current>0&&liveRef.current&&row.id===liveRef.current.id)return;
+            setLive(row);
+          }
           else setLive(cur=>cur&&cur.id===row.id?null:cur);
         })
         .subscribe();
     })();
     return()=>{if(ch)supabase.removeChannel(ch);};
   },[]);
+
+  const mutateLog=async fn=>{
+    const cur=liveRef.current;
+    if(!cur)return;
+    const next=fn(cur.point_log||[]);
+    liveRef.current={...cur,point_log:next};
+    setLive(l=>l?{...l,point_log:next}:l);
+    pending.current++;
+    try{await supabase.from('live_games').update({point_log:next}).eq('id',cur.id);}
+    finally{pending.current--;}
+  };
+  // Duplo toque acidental no mesmo botão de ponto (<350ms) é ignorado
+  const addPoint=t=>{const n=Date.now();if(n-tapGuard.current<350)return;tapGuard.current=n;mutateLog(log=>[...log,t]);};
+  const undoPoint=()=>mutateLog(log=>log.slice(0,-1));
 
   const gp=id=>players.find(p=>p.id===id)||{id,name:"?",color:"#555"};
 
@@ -761,14 +785,13 @@ function LiveTab({players,campos,defaultCampo,onSaveGame}){
     const h=e=>{
       if(e.repeat)return;
       if(e.target&&/^(INPUT|SELECT|TEXTAREA)$/.test(e.target.tagName))return;
-      const log=live.point_log||[];
-      if(e.key==='ArrowLeft'||e.key==='1'){e.preventDefault();pushLog([...log,0]);}
-      else if(e.key==='ArrowRight'||e.key==='2'){e.preventDefault();pushLog([...log,1]);}
-      else if(e.key==='Backspace'||e.key==='ArrowDown'){e.preventDefault();pushLog(log.slice(0,-1));}
+      if(e.key==='ArrowLeft'||e.key==='1'){e.preventDefault();addPoint(0);}
+      else if(e.key==='ArrowRight'||e.key==='2'){e.preventDefault();addPoint(1);}
+      else if(e.key==='Backspace'||e.key==='ArrowDown'){e.preventDefault();undoPoint();}
     };
     window.addEventListener('keydown',h);
     return()=>window.removeEventListener('keydown',h);
-  },[live]);
+  },[live?.id]);
 
   const start=async cfg=>{
     const row={id:uid(),date:today(),campo:cfg.campo,team1:cfg.team1,team2:cfg.team2,format:cfg.format,first_server:cfg.firstServer,point_log:[],status:'active'};
@@ -779,11 +802,6 @@ function LiveTab({players,campos,defaultCampo,onSaveGame}){
       ({data}=await supabase.from('live_games').insert(semSrv).select().single());
     }
     setLive(data||row);setView("ctrl");
-  };
-
-  const pushLog=async log=>{
-    setLive(l=>l?{...l,point_log:log}:l); // atualização otimista; Realtime sincroniza os outros
-    await supabase.from('live_games').update({point_log:log}).eq('id',live.id);
   };
 
   const cancel=async()=>{
@@ -805,7 +823,7 @@ function LiveTab({players,campos,defaultCampo,onSaveGame}){
 
   if(!ready)return(<div className="empty"><span style={{fontSize:32}}>🔴</span><span className="es">A ligar…</span></div>);
   if(!live)return(<LiveSetup players={players} campos={campos} defaultCampo={defaultCampo} onStart={start}/>);
-  if(view==="ctrl")return(<LiveCtrl live={live} gp={gp} onPoint={t=>pushLog([...(live.point_log||[]),t])} onUndo={()=>pushLog((live.point_log||[]).slice(0,-1))} onFinish={finish} onCancel={cancel} onBack={()=>setView("lobby")}/>);
+  if(view==="ctrl")return(<LiveCtrl live={live} gp={gp} onPoint={addPoint} onUndo={undoPoint} onFinish={finish} onCancel={cancel} onBack={()=>setView("lobby")}/>);
   if(view==="board")return(<LiveBoard live={live} gp={gp} onBack={()=>setView("lobby")}/>);
   return(
     <div className="scr">
@@ -901,6 +919,17 @@ function ScoreGrid({live,gp,big}){
 
 function LiveCtrl({live,gp,onPoint,onUndo,onFinish,onCancel,onBack}){
   const sc=deriveScore(live.point_log||[],live.format,live.first_server);
+  // Correção em 2 toques: o 1.º arma (botão fica vermelho), o 2.º confirma
+  const[armUndo,setArmUndo]=useState(false);
+  useEffect(()=>{
+    if(!armUndo)return;
+    const t=setTimeout(()=>setArmUndo(false),2500);
+    return()=>clearTimeout(t);
+  },[armUndo]);
+  const undoClick=()=>{
+    if(!armUndo){setArmUndo(true);return;}
+    setArmUndo(false);onUndo();
+  };
   const names=[live.team1.map(id=>gp(id).name).join(" & "),live.team2.map(id=>gp(id).name).join(" & ")];
   return(
     <div className="scr sf">
@@ -916,7 +945,7 @@ function LiveCtrl({live,gp,onPoint,onUndo,onFinish,onCancel,onBack}){
         </div>
       )}
       <div style={{display:'flex',gap:8,marginTop:14}}>
-        <button className="btnc" style={{flex:1}} disabled={!(live.point_log||[]).length} onClick={onUndo}>↩️ Desfazer</button>
+        <button className={`btnc${armUndo?' undo-arm':''}`} style={{flex:1}} disabled={!(live.point_log||[]).length} onClick={undoClick}>{armUndo?'⚠️ Confirmar correção':'↩️ Desfazer'}</button>
         <button className="btns" style={{flex:1}} onClick={onFinish}>💾 Terminar e Guardar</button>
       </div>
       <button className="abtn del" style={{width:'100%',marginTop:10}} onClick={onCancel}>Anular jogo</button>
@@ -1174,6 +1203,8 @@ select option{background:var(--card2);}
 .lv-gridb .lv-v{font-size:44px;}
 .lv-gridb .lv-pt{font-size:58px;}
 .lv-gridb .lv-fin{font-size:22px;}
+
+.undo-arm{border-color:var(--r)!important;color:var(--r)!important;font-weight:700;}
 
 /* ── Watch copy rows ── */
 .wrow{display:flex;align-items:center;gap:10px;background:var(--card2);border:1px solid var(--bd);border-radius:8px;padding:9px 12px;margin-bottom:7px;}
