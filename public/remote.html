@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="pt">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Padel Remote</title>
+<style>
+/* Página-comando minimalista: funciona no mini-browser do Apple Watch
+   (link aberto a partir de Mensagens), num telemóvel antigo, em qualquer lado. */
+html,body{margin:0;height:100%;}
+body{background:#07101f;font-family:-apple-system,'Outfit',sans-serif;display:flex;flex-direction:column;}
+button{border:none;color:#fff;cursor:pointer;font-family:inherit;font-weight:700;}
+#t1{flex:1;background:#0a7d43;font-size:9vh;}
+#t2{flex:1;background:#b45414;font-size:9vh;}
+#undo{flex:0 0 16%;background:#1a2d47;font-size:4.5vh;font-weight:500;}
+#msg{position:fixed;top:6px;left:0;right:0;text-align:center;color:#fff;font-size:4vh;text-shadow:0 1px 4px #000;pointer-events:none;}
+button:active{filter:brightness(1.3);}
+</style>
+</head>
+<body>
+<div id="msg"></div>
+<button id="t1" onclick="go('team=0')">🟢 Eq. 1</button>
+<button id="t2" onclick="go('team=1')">🟠 Eq. 2</button>
+<button id="undo" onclick="go('undo=1')">↩️ Desfazer</button>
+<script>
+var busy=false;
+function go(q){
+  if(busy)return;busy=true;
+  var m=document.getElementById('msg');m.textContent='…';
+  fetch('/api/point?'+q)
+    .then(function(r){return r.text();})
+    .then(function(t){m.textContent=t;})
+    .catch(function(){m.textContent='⚠️ Sem ligação';})
+    .finally(function(){setTimeout(function(){m.textContent='';busy=false;},900);});
+}
+</script>
+</body>
+</html>

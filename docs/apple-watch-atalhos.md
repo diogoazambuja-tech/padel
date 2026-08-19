@@ -1,65 +1,52 @@
 # Marcar pontos com o Apple Watch (app Atalhos)
 
-O Apple Watch não corre web apps nem funciona como comando Bluetooth genérico,
-mas a app **Atalhos** do watchOS consegue fazer pedidos HTTP. Com dois atalhos,
-o relógio passa a marcar pontos no jogo ao vivo — e o placar no iPad/telemóvel
-atualiza em tempo real via Supabase Realtime.
-
-## Como funciona
+O Apple Watch não corre web apps, mas a app **Atalhos** do watchOS chama URLs.
+A app padel expõe URLs simples (GET, sem chaves nem cabeçalhos) que marcam
+pontos no jogo ao vivo — o placar no iPad/telemóvel atualiza em tempo real.
 
 ```
-Apple Watch (Atalhos)  ──HTTP──▶  Supabase (add_live_point)  ──Realtime──▶  Placar iPad/TV
+Apple Watch (Atalhos) ──GET──▶ /api/point (Vercel) ──▶ Supabase ──Realtime──▶ Placar
 ```
 
-As funções na base de dados atuam sempre sobre o **jogo ativo mais recente**
-(iniciado no separador 🔴 Live da app).
+## URLs
 
-## Criar os atalhos (no iPhone, sincronizam para o Watch)
+Disponíveis com botões **Copiar** e **🧪 Testar** em **Configurações → ⌚ Watch**:
 
-Abre a app **Atalhos** no iPhone → **+** para criar um novo atalho:
+| Ação | URL |
+|---|---|
+| 🟢 Ponto Equipa 1 | `https://<app>.vercel.app/api/point?team=0` |
+| 🟠 Ponto Equipa 2 | `https://<app>.vercel.app/api/point?team=1` |
+| ↩️ Desfazer | `https://<app>.vercel.app/api/point?undo=1` |
 
-### Atalho 1 — "🟢 Ponto Eq.1"
+Como são GET simples, funcionam até no browser — útil para testar.
+A chave do Supabase fica no servidor (Vercel), nunca no atalho.
 
-1. Adiciona a ação **"Obter conteúdos de URL"** (Get Contents of URL)
-2. URL:
-   `https://tfwkxqrjixxnnybdqkoy.supabase.co/rest/v1/rpc/add_live_point`
-3. Toca em **Mostrar mais** e configura:
-   - **Método**: `POST`
-   - **Cabeçalhos** (Headers):
-     - `apikey` = *(a chave anon — a mesma `VITE_SUPABASE_ANON_KEY` usada no Vercel)*
-     - `Content-Type` = `application/json`
-   - **Corpo do pedido** (Request Body): JSON → `{"team": 0}`
-4. Nome: `🟢 Ponto Eq.1`
-5. Nas definições do atalho (ícone ⓘ), ativa **"Mostrar no Apple Watch"**
+## Criar cada atalho (1 ação, ~1 minuto)
 
-### Atalho 2 — "🟠 Ponto Eq.2"
+1. App **Atalhos** no iPhone → **+** → **Adicionar ação**
+2. Pesquisa **"Obter conteúdos"** → escolhe **"Obter conteúdos do URL"** (categoria Web)
+3. Cola o URL — e mais nada (fica GET, sem cabeçalhos, sem corpo)
+4. Nomeia (ex.: `🟢 Ponto Eq.1`) → **Concluído**
+5. No ⓘ do atalho, ativa **"Mostrar no Apple Watch"**
 
-Igual ao anterior, mas com corpo `{"team": 1}` e nome `🟠 Ponto Eq.2`.
+Repete para os 3 URLs.
 
-### Atalho 3 (opcional) — "↩️ Desfazer"
+## Partilhar com o grupo (instalação de 1 toque)
 
-Igual, mas com URL
-`https://tfwkxqrjixxnnybdqkoy.supabase.co/rest/v1/rpc/undo_live_point`
-e corpo vazio `{}`.
+Mantém o atalho premido → **Partilhar** → **Copiar link iCloud** → envia por
+WhatsApp. Quem recebe toca no link → **Obter atalho** → instalado. Cada pessoa
+só precisa de ativar "Mostrar no Apple Watch" no seu ⓘ.
 
 ## No Apple Watch
 
 - Os atalhos aparecem na app **Atalhos** do relógio
-- Para acesso rápido: adiciona a **complicação Atalhos** ao mostrador do
-  relógio — levantar o pulso → toque na complicação → toque no atalho
-- Dica: numa Smart Stack (watchOS 10+) os atalhos podem ficar ainda mais à mão
+- Acesso rápido: adiciona a **complicação Atalhos** ao mostrador
 
 ## Utilização num jogo
 
-1. Na app (telemóvel/iPad): separador **🔴 Live** → configura equipas → **Iniciar Jogo**
-2. Deixa o iPad/telemóvel com a vista **📺 Placar** aberta
-3. Marca os pontos a partir do relógio com os atalhos
-4. A equipa 1 é a primeira que escolheste (verde); a equipa 2 é a laranja
-5. No fim, no telemóvel: **💾 Terminar e Guardar** → o jogo entra no histórico
+1. Telemóvel/iPad: **🔴 Live** → equipas → quem serve → **Iniciar Jogo**
+2. Deixa um ecrã na vista **📺 Placar** (com 🔊 para anúncios de voz)
+3. Marca pontos do relógio; a app trata do 15/30/40, jogos, tie-breaks e sets
+4. No fim: **💾 Terminar e Guardar** → entra no histórico e rankings
 
-## Notas
-
-- A chave `anon` é pública por natureza (já vai embutida na web app), por isso
-  pode ser colada num atalho sem problema de segurança adicional
-- Se não houver jogo ativo, os atalhos não fazem nada (sem erro)
-- As funções estão em `supabase/migration-004-live-point-rpc.sql`
+Sem jogo ativo, os URLs não fazem nada (por design).
