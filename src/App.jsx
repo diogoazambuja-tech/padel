@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useRef } from "react";
-import { supabase, supabaseUrl, supabaseKey } from "./supabase.js";
+import { supabase } from "./supabase.js";
 
 const COLORS = ["#00e676","#ff6b35","#00b0ff","#e040fb","#ffea00","#ff4444","#00bfa5","#ff6d00","#f472b6","#a78bfa"];
 const uid = () => Math.random().toString(36).slice(2,10);
@@ -479,33 +479,42 @@ function CopyRow({label,value}){
 }
 
 function WatchSection(){
+  const origin=window.location.origin;
+  const rows=[
+    {label:"🟢 Ponto Equipa 1",url:`${origin}/api/point?team=0`},
+    {label:"🟠 Ponto Equipa 2",url:`${origin}/api/point?team=1`},
+    {label:"↩️ Desfazer último ponto",url:`${origin}/api/point?undo=1`},
+  ];
+  const testar=async url=>{
+    try{const r=await fetch(url);alert(await r.text());}
+    catch{alert("Não foi possível contactar o servidor.");}
+  };
   return(
     <div>
       <div style={{fontSize:12,color:'var(--mt)',marginBottom:16,lineHeight:1.5}}>
-        Cria os atalhos no iPhone (app <b style={{color:'var(--t)'}}>Atalhos</b>) com a ação
-        <b style={{color:'var(--t)'}}> "Obter conteúdos de URL"</b>, método <b style={{color:'var(--t)'}}>POST</b>,
-        e cola os valores abaixo. Ativa <b style={{color:'var(--t)'}}>"Mostrar no Apple Watch"</b> em cada atalho.
-        Depois partilha-os com o grupo por link iCloud (manter premido → Partilhar).
+        Cada URL marca pontos no jogo do separador <b style={{color:'var(--t)'}}>🔴 Live</b> —
+        sem chaves, sem cabeçalhos, sem configuração. Com um jogo ativo podes testar já aqui. 👇
       </div>
-      <div className="fg"><label className="fl">🟢 Atalho — Ponto Equipa 1</label>
-        <CopyRow label="URL" value={`${supabaseUrl}/rest/v1/rpc/add_live_point`}/>
-        <CopyRow label="Corpo do pedido (JSON)" value={'{"team": 0}'}/>
+      <div className="fg"><label className="fl">🔗 URLs para os atalhos</label>
+        {rows.map(r=>(
+          <div key={r.url}>
+            <CopyRow label={r.label} value={r.url}/>
+            <button className="abtn edit" style={{marginTop:-2,marginBottom:9,fontSize:11,padding:'4px 10px'}} onClick={()=>testar(r.url)}>🧪 Testar</button>
+          </div>
+        ))}
       </div>
-      <div className="fg"><label className="fl">🟠 Atalho — Ponto Equipa 2</label>
-        <CopyRow label="URL (igual ao anterior)" value={`${supabaseUrl}/rest/v1/rpc/add_live_point`}/>
-        <CopyRow label="Corpo do pedido (JSON)" value={'{"team": 1}'}/>
-      </div>
-      <div className="fg"><label className="fl">↩️ Atalho — Desfazer (opcional)</label>
-        <CopyRow label="URL" value={`${supabaseUrl}/rest/v1/rpc/undo_live_point`}/>
-        <CopyRow label="Corpo do pedido (JSON)" value={"{}"}/>
-      </div>
-      <div className="fg"><label className="fl">🔑 Cabeçalhos (iguais nos 3 atalhos)</label>
-        <CopyRow label="apikey" value={supabaseKey||""}/>
-        <CopyRow label="Content-Type" value="application/json"/>
+      <div className="fg"><label className="fl">⌚ Criar cada atalho (1 ação · ~1 min)</label>
+        <ol style={{fontSize:12,lineHeight:2,paddingLeft:20,color:'var(--t)'}}>
+          <li>App <b>Atalhos</b> → <b>+</b> → <b>Adicionar ação</b></li>
+          <li>Pesquisa <b>"Obter conteúdos"</b> → escolhe <b>"Obter conteúdos do URL"</b> (categoria Web)</li>
+          <li>Cola o URL — e mais nada (não mexas em método nem cabeçalhos)</li>
+          <li>Dá o nome (ex.: 🟢 Ponto Eq.1) → <b>Concluído</b></li>
+          <li>No ⓘ do atalho ativa <b>"Mostrar no Apple Watch"</b></li>
+        </ol>
       </div>
       <div style={{fontSize:11,color:'var(--mt)',lineHeight:1.5}}>
-        Os atalhos marcam pontos no jogo ativo do separador 🔴 Live. Sem jogo ativo não fazem nada.
-        A chave é a pública da app (anon) — pode ser partilhada com o grupo.
+        Para o grupo: mantém o atalho premido → Partilhar → link iCloud → WhatsApp.
+        Quem recebe instala com um toque. Sem jogo ativo os URLs não fazem nada.
       </div>
     </div>
   );
