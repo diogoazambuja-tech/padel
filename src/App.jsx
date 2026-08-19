@@ -114,11 +114,12 @@ export default function App(){
       <main className="main">
         {tab==="cal" &&<CalTab players={players} games={games} campos={campos}/>}
         {tab==="new" &&<NewTab players={players} initial={edit} onSave={saveGame} defaultCampo={defaultCampo} campos={campos} onCancel={()=>{setEdit(null);setTab("cal");}}/>}
+        {tab==="live"&&<LiveTab players={players} campos={campos} defaultCampo={defaultCampo} onSaveGame={saveGame}/>}
         {tab==="stat"&&<StatsTab players={players} games={games}/>}
         {tab==="cfg" &&<ConfigTab players={players} games={games} campos={campos} setCampos={setCampos} defaultCampo={defaultCampo} setDefaultCampo={setDefaultCampo} onAddPlayer={addPlayer} onSavePlayer={savePlayer} onDelPlayer={delPlayer} onEditGame={editGame} onDelGame={delGame} theme={theme} setTheme={setTheme}/>}
       </main>
       <nav className="nav">
-        {[{id:"cal",i:"📅",l:"Jogos"},{id:"new",i:"➕",l:"Novo Jogo"},{id:"stat",i:"🏆",l:"Rankings"},{id:"cfg",i:"⚙️",l:"Config"}].map(({id,i,l})=>(
+        {[{id:"cal",i:"📅",l:"Jogos"},{id:"new",i:"➕",l:"Novo"},{id:"live",i:"🔴",l:"Live"},{id:"stat",i:"🏆",l:"Rankings"},{id:"cfg",i:"⚙️",l:"Config"}].map(({id,i,l})=>(
           <button key={id} className={`nb${tab===id?" on":""}`} onClick={()=>{setEdit(null);setTab(id);}}>
             <span className="ni">{i}</span><span className="nl">{l}</span>
           </button>
@@ -578,6 +579,212 @@ function GamesAdminSection({games,players,onEdit,onDel}){
   );
 }
 
+/* ── Live Tab ───────────────────────────────────────────── */
+const PTLBL=["0","15","30","40","AD"];
+
+// Deriva o resultado completo reproduzindo o log de pontos (0 = eq.1, 1 = eq.2).
+// Desfazer = remover o último ponto do log. Melhor de 3 sets, tie-break a 6-6.
+function deriveScore(log,format){
+  let pts=[0,0],games=[0,0],sets=[],tb=false,tbp=[0,0],finished=false,winner=0;
+  const winGame=t=>{
+    const o=1-t;pts=[0,0];games=[...games];games[t]++;
+    if(games[t]>=6&&games[t]-games[o]>=2){sets.push({t1:games[0],t2:games[1]});games=[0,0];}
+    else if(games[t]===6&&games[o]===6){tb=true;tbp=[0,0];}
+  };
+  for(const t of log){
+    if(finished)break;
+    const o=1-t;
+    if(tb){
+      tbp=[...tbp];tbp[t]++;
+      if(tbp[t]>=7&&tbp[t]-tbp[o]>=2){
+        games=[...games];games[t]++;
+        sets.push({t1:games[0],t2:games[1]});
+        games=[0,0];tb=false;tbp=[0,0];
+      }
+    }else{
+      pts=[...pts];
+      if(pts[t]===3&&pts[o]===3){if(format==='golden')winGame(t);else pts[t]=4;}
+      else if(pts[t]===4)winGame(t);
+      else if(pts[o]===4)pts[o]=3;
+      else if(pts[t]===3)winGame(t);
+      else pts[t]++;
+    }
+    const s1=sets.filter(s=>s.t1>s.t2).length,s2=sets.filter(s=>s.t2>s.t1).length;
+    if(s1>=2||s2>=2){finished=true;winner=s1>s2?1:2;}
+  }
+  const s1=sets.filter(s=>s.t1>s.t2).length,s2=sets.filter(s=>s.t2>s.t1).length;
+  return{pts,games,sets,tb,tbp,finished,winner,setsWon:[s1,s2]};
+}
+
+function LiveTab({players,campos,defaultCampo,onSaveGame}){
+  const[live,setLive]=useState(null);
+  const[view,setView]=useState("lobby");
+  const[ready,setReady]=useState(false);
+
+  useEffect(()=>{
+    let ch;
+    (async()=>{
+      const{data}=await supabase.from('live_games').select('*').eq('status','active').order('created_at',{ascending:false}).limit(1);
+      setLive(data?.[0]||null);setReady(true);
+      ch=supabase.channel('live_games_ch')
+        .on('postgres_changes',{event:'*',schema:'public',table:'live_games'},p=>{
+          const row=p.new;
+          if(!row||!row.id)return;
+          if(row.status==='active')setLive(row);
+          else setLive(cur=>cur&&cur.id===row.id?null:cur);
+        })
+        .subscribe();
+    })();
+    return()=>{if(ch)supabase.removeChannel(ch);};
+  },[]);
+
+  const gp=id=>players.find(p=>p.id===id)||{id,name:"?",color:"#555"};
+
+  const start=async cfg=>{
+    const row={id:uid(),date:today(),campo:cfg.campo,team1:cfg.team1,team2:cfg.team2,format:cfg.format,point_log:[],status:'active'};
+    const{data}=await supabase.from('live_games').insert(row).select().single();
+    setLive(data||row);setView("ctrl");
+  };
+
+  const pushLog=async log=>{
+    setLive(l=>l?{...l,point_log:log}:l); // atualização otimista; Realtime sincroniza os outros
+    await supabase.from('live_games').update({point_log:log}).eq('id',live.id);
+  };
+
+  const cancel=async()=>{
+    if(!confirm("Anular o jogo ao vivo?"))return;
+    await supabase.from('live_games').update({status:'cancelled'}).eq('id',live.id);
+    setLive(null);setView("lobby");
+  };
+
+  const finish=async()=>{
+    const sc=deriveScore(live.point_log||[],live.format);
+    const sets=sc.sets.map(s=>({t1:String(s.t1),t2:String(s.t2)}));
+    if(sc.games[0]>0||sc.games[1]>0)sets.push({t1:String(sc.games[0]),t2:String(sc.games[1])});
+    if(!sets.length){alert("Ainda não há jogos marcados para guardar.");return;}
+    if(!sc.finished&&!confirm("A partida ainda não terminou. Guardar mesmo assim?"))return;
+    await supabase.from('live_games').update({status:'finished'}).eq('id',live.id);
+    setLive(null);setView("lobby");
+    onSaveGame({id:live.id,date:live.date,campo:live.campo||"",jogadoresFixos:true,team1:live.team1,team2:live.team2,jogadores:[],sets,beers:{}});
+  };
+
+  if(!ready)return(<div className="empty"><span style={{fontSize:32}}>🔴</span><span className="es">A ligar…</span></div>);
+  if(!live)return(<LiveSetup players={players} campos={campos} defaultCampo={defaultCampo} onStart={start}/>);
+  if(view==="ctrl")return(<LiveCtrl live={live} gp={gp} onPoint={t=>pushLog([...(live.point_log||[]),t])} onUndo={()=>pushLog((live.point_log||[]).slice(0,-1))} onFinish={finish} onCancel={cancel} onBack={()=>setView("lobby")}/>);
+  if(view==="board")return(<LiveBoard live={live} gp={gp} onBack={()=>setView("lobby")}/>);
+  return(
+    <div className="scr">
+      <div className="ft">Jogo ao Vivo</div>
+      <div className="lv-vs">{live.team1.map(id=>gp(id).name).join(" & ")} <span style={{color:'var(--mt)',fontSize:12}}>vs</span> {live.team2.map(id=>gp(id).name).join(" & ")}</div>
+      <div className="lv-lobby">
+        <button className="btns lv-big" onClick={()=>setView("ctrl")}>📱 Marcador<br/><span className="lv-sub">para quem regista os pontos no campo</span></button>
+        <button className="btnc lv-big" onClick={()=>setView("board")}>📺 Placar<br/><span className="lv-sub">ecrã grande para iPad / TV — atualiza sozinho</span></button>
+        <button className="abtn del" style={{marginTop:14}} onClick={cancel}>Anular jogo ao vivo</button>
+      </div>
+    </div>
+  );
+}
+
+function LiveSetup({players,campos,defaultCampo,onStart}){
+  const[team1,setTeam1]=useState(["",""]);
+  const[team2,setTeam2]=useState(["",""]);
+  const[campo,setCampo]=useState(defaultCampo||"");
+  const[format,setFormat]=useState("golden");
+  const allSel=[...team1,...team2].filter(Boolean);
+  const can=team1.every(Boolean)&&team2.every(Boolean);
+  const setT=(setter,arr,i,v)=>setter(arr.map((x,j)=>j===i?v:x));
+  return(
+    <div className="scr sf">
+      <div className="ft">Jogo ao Vivo</div>
+      <div className="fg"><label className="fl">👥 Equipas</label>
+        <div className="tgrid">
+          <div className="tc"><div className="tch t1h">Equipa 1</div>{[0,1].map(i=><PSel key={i} players={players} value={team1[i]} onChange={v=>setT(setTeam1,team1,i,v)} allSel={allSel} myVal={team1[i]}/>)}</div>
+          <div className="vsm">VS</div>
+          <div className="tc"><div className="tch t2h">Equipa 2</div>{[0,1].map(i=><PSel key={i} players={players} value={team2[i]} onChange={v=>setT(setTeam2,team2,i,v)} allSel={allSel} myVal={team2[i]}/>)}</div>
+        </div>
+      </div>
+      {campos.length>0&&(
+        <div className="fg"><label className="fl">📍 Campo</label>
+          <select className="fi" style={{cursor:'pointer'}} value={campo} onChange={e=>setCampo(e.target.value)}>
+            <option value="">— Sem campo —</option>
+            {campos.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}
+          </select>
+        </div>
+      )}
+      <div className="fg"><label className="fl">⚖️ Pontuação a 40-40</label>
+        <div style={{display:'flex',gap:8}}>
+          <button className={`catb${format==='golden'?' caton':''}`} style={{flex:1,padding:10,fontSize:12}} onClick={()=>setFormat('golden')}>🥇 Ponto de ouro</button>
+          <button className={`catb${format==='advantage'?' caton':''}`} style={{flex:1,padding:10,fontSize:12}} onClick={()=>setFormat('advantage')}>♾️ Vantagens</button>
+        </div>
+      </div>
+      <button className="btns" style={{width:'100%',padding:16,fontSize:16}} disabled={!can} onClick={()=>onStart({team1,team2,campo,format})}>🔴 Iniciar Jogo</button>
+      <div style={{fontSize:11,color:'var(--mt)',marginTop:12,textAlign:'center'}}>Melhor de 3 sets · tie-break a 6-6</div>
+    </div>
+  );
+}
+
+function ScoreGrid({live,gp,big}){
+  const sc=deriveScore(live.point_log||[],live.format);
+  const names=[live.team1.map(id=>gp(id).name).join(" & "),live.team2.map(id=>gp(id).name).join(" & ")];
+  const colors=[live.team1.map(id=>gp(id).color),live.team2.map(id=>gp(id).color)];
+  return(
+    <div className={`lv-grid${big?' lv-gridb':''}`}>
+      <div className="lv-hd"><span/><span>Sets</span><span>Jogos</span><span>Pontos</span></div>
+      {[0,1].map(t=>(
+        <div key={t} className={`lv-row${sc.finished&&sc.winner===t+1?' lv-win':''}`}>
+          <span className="lv-nm"><span className="gds">{colors[t].map((c,i)=><span key={i} className="dot" style={{background:c}}/>)}</span>{names[t]}</span>
+          <span className="lv-v">{sc.setsWon[t]}</span>
+          <span className="lv-v">{sc.games[t]}</span>
+          <span className="lv-v lv-pt">{sc.tb?sc.tbp[t]:PTLBL[sc.pts[t]]}</span>
+        </div>
+      ))}
+      {sc.sets.length>0&&<div className="lv-sets">{sc.sets.map(s=>`${s.t1}-${s.t2}`).join("  ·  ")}</div>}
+      {sc.tb&&<div className="lv-tbk">TIE-BREAK</div>}
+      {sc.finished&&<div className="lv-fin">🏆 {names[sc.winner-1]} venceu!</div>}
+    </div>
+  );
+}
+
+function LiveCtrl({live,gp,onPoint,onUndo,onFinish,onCancel,onBack}){
+  const sc=deriveScore(live.point_log||[],live.format);
+  const names=[live.team1.map(id=>gp(id).name).join(" & "),live.team2.map(id=>gp(id).name).join(" & ")];
+  return(
+    <div className="scr sf">
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:14}}>
+        <div className="ft" style={{marginBottom:0}}>Marcador</div>
+        <button className="abtn edit" onClick={onBack}>← Voltar</button>
+      </div>
+      <ScoreGrid live={live} gp={gp}/>
+      {!sc.finished&&(
+        <div className="lv-taps">
+          <button className="lv-tap lv-t1" onClick={()=>onPoint(0)}>+ Ponto<br/><span className="lv-tapn">{names[0]}</span></button>
+          <button className="lv-tap lv-t2" onClick={()=>onPoint(1)}>+ Ponto<br/><span className="lv-tapn">{names[1]}</span></button>
+        </div>
+      )}
+      <div style={{display:'flex',gap:8,marginTop:14}}>
+        <button className="btnc" style={{flex:1}} disabled={!(live.point_log||[]).length} onClick={onUndo}>↩️ Desfazer</button>
+        <button className="btns" style={{flex:1}} onClick={onFinish}>💾 Terminar e Guardar</button>
+      </div>
+      <button className="abtn del" style={{width:'100%',marginTop:10}} onClick={onCancel}>Anular jogo</button>
+    </div>
+  );
+}
+
+function LiveBoard({live,gp,onBack}){
+  // Mantém o ecrã aceso enquanto o placar está visível (iPad/TV)
+  useEffect(()=>{
+    let wl;
+    (async()=>{try{wl=await navigator.wakeLock?.request('screen');}catch{}})();
+    return()=>{wl?.release?.();};
+  },[]);
+  return(
+    <div className="lv-full" onClick={onBack}>
+      <ScoreGrid live={live} gp={gp} big/>
+      <div style={{fontSize:11,color:'var(--mt)',marginTop:20}}>🔴 Atualiza em tempo real · toca no ecrã para voltar</div>
+    </div>
+  );
+}
+
 /* ── Helpers ────────────────────────────────────────────── */
 function calcStats(players,games){
   const d={};
@@ -779,6 +986,37 @@ select option{background:var(--card2);}
 .rrd{width:9px;height:9px;border-radius:50%;flex-shrink:0;}
 .rrname{flex:1;font-size:13px;font-weight:500;}
 .rrv{font-family:'Bebas Neue',sans-serif;font-size:20px;color:var(--g);}
+
+/* ── Live scoreboard ── */
+.lv-lobby{display:flex;flex-direction:column;gap:12px;}
+.lv-vs{font-size:15px;font-weight:600;text-align:center;margin-bottom:16px;}
+.lv-big{padding:20px;font-size:16px;line-height:1.5;border-radius:14px;}
+.lv-sub{font-size:11px;font-weight:400;opacity:.75;}
+.lv-grid{background:var(--card);border:1px solid var(--bd);border-radius:var(--rad);padding:14px;margin-bottom:14px;}
+.lv-hd{display:grid;grid-template-columns:1fr 48px 48px 62px;gap:4px;font-size:10px;color:var(--mt);text-transform:uppercase;letter-spacing:1px;text-align:center;margin-bottom:6px;}
+.lv-hd span:first-child{text-align:left;}
+.lv-row{display:grid;grid-template-columns:1fr 48px 48px 62px;gap:4px;align-items:center;padding:10px 4px;border-top:1px solid var(--bd);border-radius:8px;}
+.lv-nm{display:flex;align-items:center;gap:8px;font-size:14px;font-weight:600;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.lv-v{font-family:'Bebas Neue',sans-serif;font-size:26px;text-align:center;color:var(--t);}
+.lv-pt{color:var(--g);font-size:32px;}
+.lv-win{background:rgba(var(--g-rgb),.08);}
+.lv-sets{font-family:'Bebas Neue',sans-serif;text-align:center;color:var(--mt);font-size:15px;letter-spacing:2px;margin-top:10px;}
+.lv-tbk{text-align:center;color:var(--o);font-size:11px;font-weight:700;letter-spacing:2px;margin-top:8px;}
+.lv-fin{text-align:center;color:var(--g);font-size:15px;font-weight:700;margin-top:10px;}
+.lv-taps{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:4px;}
+.lv-tap{padding:34px 10px;border-radius:16px;border:none;cursor:pointer;font-family:'Bebas Neue',sans-serif;font-size:26px;letter-spacing:1px;color:var(--bg);line-height:1.4;}
+.lv-tap:active{transform:scale(.97);}
+.lv-tapn{font-family:'Outfit',sans-serif;font-size:11px;font-weight:600;letter-spacing:.3px;}
+.lv-t1{background:var(--g);}
+.lv-t2{background:var(--o);}
+.lv-full{min-height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:20px;cursor:pointer;}
+.lv-full .lv-grid{width:100%;max-width:700px;}
+.lv-gridb{padding:24px;}
+.lv-gridb .lv-hd,.lv-gridb .lv-row{grid-template-columns:1fr 64px 64px 88px;}
+.lv-gridb .lv-nm{font-size:19px;}
+.lv-gridb .lv-v{font-size:44px;}
+.lv-gridb .lv-pt{font-size:58px;}
+.lv-gridb .lv-fin{font-size:22px;}
 
 /* ── Theme picker ── */
 .theme-card{display:flex;align-items:center;gap:14px;padding:13px 14px;background:var(--card);border:2px solid var(--bd);border-radius:var(--rad);cursor:pointer;width:100%;transition:border-color .15s;}
