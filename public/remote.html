@@ -5,57 +5,91 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Padel Remote</title>
 <style>
-/* Página-comando minimalista: funciona no mini-browser do Apple Watch
+/* Página-comando com placar: funciona no mini-browser do Apple Watch
    (link aberto a partir de Mensagens), num telemóvel antigo, em qualquer lado. */
 html,body{margin:0;height:100%;}
 body{background:#07101f;font-family:-apple-system,'Outfit',sans-serif;display:flex;flex-direction:column;}
+#board{flex:0 0 auto;padding:2.2vh 3vw;background:#0d1a2e;border-bottom:1px solid #1a2d47;}
+.brow{display:flex;align-items:center;gap:2vw;color:#e0ecff;font-size:4vh;line-height:1.6;}
+.srv{width:5vh;text-align:center;font-size:3.2vh;}
+.bname{flex:1;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.bvals{font-variant-numeric:tabular-nums;font-weight:700;color:#00e676;letter-spacing:.06em;}
+#status{text-align:center;color:#4a6080;font-size:3vh;padding:.6vh 0 0;min-height:3.6vh;}
 button{border:none;color:#fff;cursor:pointer;font-family:inherit;font-weight:700;}
-#t1{flex:1;background:#0a7d43;font-size:9vh;}
-#t2{flex:1;background:#b45414;font-size:9vh;}
-#undo{flex:0 0 16%;background:#1a2d47;font-size:4.5vh;font-weight:500;}
+#t1{flex:1;background:#0a7d43;font-size:7vh;}
+#t2{flex:1;background:#b45414;font-size:7vh;}
+.bsub{display:block;font-size:3.4vh;font-weight:500;opacity:.85;margin-top:.6vh;}
+#undo{flex:0 0 14%;background:#1a2d47;font-size:4vh;font-weight:500;}
 #undo.arm{background:#8a1d1d;font-weight:700;}
-#msg{position:fixed;top:6px;left:0;right:0;text-align:center;color:#fff;font-size:4vh;text-shadow:0 1px 4px #000;pointer-events:none;}
 button:active{filter:brightness(1.3);}
 </style>
 </head>
 <body>
-<div id="msg"></div>
-<button id="t1" onclick="point(0)">🟢 Eq. 1</button>
-<button id="t2" onclick="point(1)">🟠 Eq. 2</button>
+<div id="board">
+  <div class="brow"><span class="srv" id="s0"></span><span class="bname" id="n0">A ligar…</span><span class="bvals" id="v0"></span></div>
+  <div class="brow"><span class="srv" id="s1"></span><span class="bname" id="n1"></span><span class="bvals" id="v1"></span></div>
+  <div id="status"></div>
+</div>
+<button id="t1" onclick="point(0)">🟢 Eq. 1<span class="bsub">+ Ponto</span></button>
+<button id="t2" onclick="point(1)">🟠 Eq. 2<span class="bsub">+ Ponto</span></button>
 <button id="undo" onclick="undo()">↩️ Desfazer</button>
 <script>
 var busy=false,lastTap=0,armed=false,armTimer=null;
-function msg(t){document.getElementById('msg').textContent=t;}
+function el(id){return document.getElementById(id);}
+function msg(t){el('status').textContent=t;}
+
+function refresh(){
+  fetch('/api/state').then(function(r){return r.json();}).then(function(d){
+    if(!d.active){
+      el('n0').textContent='Sem jogo ativo';el('n1').textContent='';
+      el('v0').textContent='';el('v1').textContent='';
+      el('s0').textContent='';el('s1').textContent='';
+      el('t1').innerHTML='🟢 Eq. 1<span class="bsub">+ Ponto</span>';
+      el('t2').innerHTML='🟠 Eq. 2<span class="bsub">+ Ponto</span>';
+      msg('Inicia um jogo no separador 🔴 Live da app');
+      return;
+    }
+    for(var i=0;i<2;i++){
+      el('n'+i).textContent=d.names[i]||('Equipa '+(i+1));
+      el('v'+i).textContent=d.setsWon[i]+' · '+d.games[i]+' · '+d.pts[i];
+      el('s'+i).textContent=d.serving===i?'🎾':'';
+    }
+    el('t1').innerHTML='🟢 '+(d.names[0]||'Eq. 1')+'<span class="bsub">+ Ponto</span>';
+    el('t2').innerHTML='🟠 '+(d.names[1]||'Eq. 2')+'<span class="bsub">+ Ponto</span>';
+    if(d.finished)msg('🏆 '+(d.names[d.winner-1]||'Equipa '+d.winner)+' venceu!');
+    else if(d.tb)msg('TIE-BREAK · sets · jogos · pontos');
+    else msg('sets · jogos · pontos');
+  }).catch(function(){msg('⚠️ Sem ligação');});
+}
+
 function send(q){
-  if(busy)return;busy=true;msg('…');
+  if(busy)return;busy=true;
   fetch('/api/point?'+q)
-    .then(function(r){return r.text();})
-    .then(msg)
+    .then(function(){refresh();})
     .catch(function(){msg('⚠️ Sem ligação');})
-    .finally(function(){setTimeout(function(){msg('');busy=false;},900);});
+    .finally(function(){setTimeout(function(){busy=false;},600);});
 }
 function point(t){
-  // Duplo toque acidental (<400ms) é ignorado
   var n=Date.now();if(n-lastTap<400)return;lastTap=n;
   disarm();send('team='+t);
 }
 function undo(){
-  // Correção em 2 toques: o 1.º arma (botão vermelho), o 2.º confirma
   if(!armed){
     armed=true;
-    document.getElementById('undo').classList.add('arm');
-    document.getElementById('undo').textContent='⚠️ Confirmar correção';
-    msg('Toca outra vez para corrigir');
-    armTimer=setTimeout(function(){disarm();msg('');},2500);
+    el('undo').classList.add('arm');
+    el('undo').textContent='⚠️ Confirmar correção';
+    armTimer=setTimeout(function(){disarm();},2500);
     return;
   }
   disarm();send('undo=1');
 }
 function disarm(){
   armed=false;clearTimeout(armTimer);
-  var u=document.getElementById('undo');
-  u.classList.remove('arm');u.textContent='↩️ Desfazer';
+  el('undo').classList.remove('arm');
+  el('undo').textContent='↩️ Desfazer';
 }
+refresh();
+setInterval(refresh,4000);
 </script>
 </body>
 </html>
