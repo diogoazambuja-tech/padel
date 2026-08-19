@@ -844,9 +844,17 @@ function LiveSetup({players,campos,defaultCampo,onStart}){
   const[campo,setCampo]=useState(defaultCampo||"");
   const[format,setFormat]=useState("golden");
   const[srv,setSrv]=useState(0);
+  const[copied,setCopied]=useState(false);
   const allSel=[...team1,...team2].filter(Boolean);
   const can=team1.every(Boolean)&&team2.every(Boolean);
   const setT=(setter,arr,i,v)=>setter(arr.map((x,j)=>j===i?v:x));
+  const shareRemote=async()=>{
+    const url=`${window.location.origin}/remote.html`;
+    const text=`🎾 Padel ao vivo — marca os pontos aqui: ${url}`;
+    if(navigator.share){try{await navigator.share({text});return;}catch{/* cancelado */}}
+    try{await navigator.clipboard.writeText(url);setCopied(true);setTimeout(()=>setCopied(false),1800);}
+    catch{prompt("Copiar link:",url);}
+  };
   return(
     <div className="scr sf">
       <div className="ft">Jogo ao Vivo</div>
@@ -883,7 +891,8 @@ function LiveSetup({players,campos,defaultCampo,onStart}){
         </div>
       </div>
       <button className="btns" style={{width:'100%',padding:16,fontSize:16}} disabled={!can} onClick={()=>onStart({team1,team2,campo,format,firstServer:srv})}>🔴 Iniciar Jogo</button>
-      <div style={{fontSize:11,color:'var(--mt)',marginTop:12,textAlign:'center'}}>Melhor de 3 sets · tie-break a 6-6</div>
+      <button className="aset" style={{marginTop:10}} onClick={shareRemote}>{copied?"✓ Link copiado!":"📤 Partilhar link do comando de pontos"}</button>
+      <div style={{fontSize:11,color:'var(--mt)',marginTop:12,textAlign:'center'}}>Melhor de 3 sets · tie-break a 6-6<br/>O comando funciona em qualquer telemóvel — e no Apple Watch via link aberto no iMessage</div>
     </div>
   );
 }
