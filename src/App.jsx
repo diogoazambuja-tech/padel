@@ -19,14 +19,97 @@ function calcWinner(sets){
   return a>b?1:b>a?2:0;
 }
 
-// Sorteio de equipas: mantém os jogadores já selecionados, completa até 4
-// com aleatórios da base, e baralha os 4 pelos dois lados.
-// 4 selecionados → baralha só esses; 1-3 → esses + aleatórios; 0 → 4 aleatórios.
-function drawTeams(players,selectedIds){
+// Posições de jogo dos jogadores
+const POSICOES=[{id:"direita",l:"🫱 Direita"},{id:"esquerda",l:"🫲 Esquerda"},{id:"ambos",l:"🔁 Ambos"}];
+const posLabel=p=>({direita:"🫱",esquerda:"🫲"}[p]||"");
+
+// Sorteio de equipas: mantém os selecionados, completa até 4 com aleatórios da
+// base, e escolhe o emparelhamento que respeita posições (cada equipa deve
+// cobrir direita e esquerda). mode 'equilibrado' minimiza também a diferença
+// de nível Elo entre as equipas.
+function posPenalty(team,byId){
+  const p=team.map(id=>byId[id]?.posicao||'ambos');
+  let pen=0;
+  if(!p.some(x=>x==='direita'||x==='ambos'))pen++;  // ninguém joga à direita
+  if(!p.some(x=>x==='esquerda'||x==='ambos'))pen++; // ninguém joga à esquerda
+  return pen;
+}
+function drawTeams(players,selectedIds,mode='aleatorio',ratings=null){
   const sel=[...new Set(selectedIds.filter(Boolean))];
   const rest=players.map(p=>p.id).filter(id=>!sel.includes(id)).sort(()=>Math.random()-.5);
   const pool=[...sel,...rest].slice(0,4).sort(()=>Math.random()-.5);
-  return{team1:[pool[0]||"",pool[1]||""],team2:[pool[2]||"",pool[3]||""]};
+  if(pool.length<4)return{team1:[pool[0]||"",pool[1]||""],team2:[pool[2]||"",pool[3]||""]};
+  const byId=Object.fromEntries(players.map(p=>[p.id,p]));
+  const opts=[
+    [[pool[0],pool[1]],[pool[2],pool[3]]],
+    [[pool[0],pool[2]],[pool[1],pool[3]]],
+    [[pool[0],pool[3]],[pool[1],pool[2]]],
+  ];
+  const score=pr=>{
+    const pen=(posPenalty(pr[0],byId)+posPenalty(pr[1],byId))*100000;
+    const bal=mode==='equilibrado'&&ratings
+      ?Math.abs((ratings[pr[0][0]]??1000)+(ratings[pr[0][1]]??1000)-(ratings[pr[1][0]]??1000)-(ratings[pr[1][1]]??1000))
+      :0;
+    return pen+bal;
+  };
+  let best=opts[0],bs=Infinity;
+  for(const o of opts){const s=score(o);if(s<bs){bs=s;best=o;}}
+  return{team1:[...best[0]],team2:[...best[1]]};
+}
+
+// Rating Elo por jogador a partir do histórico (K=32; equipas somadas).
+// Nos jogos rotativos cada set conta como mini-partida com K=16.
+function calcElo(players,games){
+  const R={};players.forEach(p=>{R[p.id]=1000;});
+  const upd=(t1,t2,won,K)=>{
+    t1=t1.filter(id=>R[id]!=null);t2=t2.filter(id=>R[id]!=null);
+    if(t1.length<1||t2.length<1)return;
+    const r1=t1.reduce((s,id)=>s+R[id],0)/t1.length,r2=t2.reduce((s,id)=>s+R[id],0)/t2.length;
+    const e1=1/(1+Math.pow(10,(r2-r1)/400));
+    const d=K*((won?1:0)-e1);
+    t1.forEach(id=>{R[id]+=d;});t2.forEach(id=>{R[id]-=d;});
+  };
+  [...games].sort((a,b)=>a.date.localeCompare(b.date)).forEach(g=>{
+    if(g.jogadoresFixos===false){
+      (g.sets||[]).forEach(s=>{
+        const t1v=+s.t1||0,t2v=+s.t2||0;
+        if(t1v===t2v)return;
+        upd((s.team1||[]).filter(Boolean),(s.team2||[]).filter(Boolean),t1v>t2v,16);
+      });
+    }else{
+      const w=calcWinner(g.sets);if(!w)return;
+      upd((g.team1||[]).filter(Boolean),(g.team2||[]).filter(Boolean),w===1,32);
+    }
+  });
+  return R;
+}
+
+// Série temporal do Elo (uma amostra por jogo) para o gráfico de evolução
+function eloTimeline(players,games){
+  const R={};players.forEach(p=>{R[p.id]=1000;});
+  const snaps=[{date:null,R:{...R}}];
+  const upd=(t1,t2,won,K)=>{
+    t1=t1.filter(id=>R[id]!=null);t2=t2.filter(id=>R[id]!=null);
+    if(t1.length<1||t2.length<1)return;
+    const r1=t1.reduce((s,id)=>s+R[id],0)/t1.length,r2=t2.reduce((s,id)=>s+R[id],0)/t2.length;
+    const e1=1/(1+Math.pow(10,(r2-r1)/400));
+    const d=K*((won?1:0)-e1);
+    t1.forEach(id=>{R[id]+=d;});t2.forEach(id=>{R[id]-=d;});
+  };
+  [...games].sort((a,b)=>a.date.localeCompare(b.date)).forEach(g=>{
+    if(g.jogadoresFixos===false){
+      (g.sets||[]).forEach(s=>{
+        const t1v=+s.t1||0,t2v=+s.t2||0;
+        if(t1v===t2v)return;
+        upd((s.team1||[]).filter(Boolean),(s.team2||[]).filter(Boolean),t1v>t2v,16);
+      });
+    }else{
+      const w=calcWinner(g.sets);if(!w)return;
+      upd((g.team1||[]).filter(Boolean),(g.team2||[]).filter(Boolean),w===1,32);
+    }
+    snaps.push({date:g.date,R:{...R}});
+  });
+  return snaps;
 }
 
 const DEMO=[
@@ -55,6 +138,8 @@ export default function App(){
   const[theme,setThemeState]=useState(()=>localStorage.getItem('padel_theme')||"dark");
   const[loading,setLoading]=useState(true);
   const[edit,setEdit]=useState(null);
+  const camposDb=useRef(false); // tabela campos existe no Supabase?
+  const ratings=useMemo(()=>calcElo(players,games),[players,games]);
 
   useEffect(()=>{
     (async()=>{
@@ -65,18 +150,57 @@ export default function App(){
       if(pl&&pl.length>0){setPlayers(pl);}
       else{const{data:ins}=await supabase.from('players').insert(DEMO).select();setPlayers(ins||DEMO);}
       if(gm)setGames(gm);
-      const sc=localStorage.getItem('padel_campos');
-      const sd=localStorage.getItem('padel_default_campo');
-      if(sc){setCamposState(JSON.parse(sc));}
-      else{setCamposState([MESH_CAMPO]);localStorage.setItem('padel_campos',JSON.stringify([MESH_CAMPO]));}
-      if(sd){setDefaultCampoState(sd);}
-      else{setDefaultCampoState(MESH_CAMPO.id);localStorage.setItem('padel_default_campo',MESH_CAMPO.id);}
+      // Campos: tabela partilhada no Supabase; fallback localStorage se a
+      // migração 006 ainda não tiver sido aplicada
+      const{data:cs,error:ce}=await supabase.from('campos').select('*').order('created_at');
+      if(!ce){
+        camposDb.current=true;
+        let list=cs||[];
+        if(list.length===0){
+          // Seed inicial: migra os campos locais (ou cria o Mesh)
+          const local=JSON.parse(localStorage.getItem('padel_campos')||'null')||[MESH_CAMPO];
+          const rows=local.map((c,i)=>({id:c.id,name:c.name,is_default:i===0}));
+          const{data:ins}=await supabase.from('campos').insert(rows).select();
+          list=ins||rows;
+        }
+        setCamposState(list);
+        setDefaultCampoState(list.find(c=>c.is_default)?.id||list[0]?.id||"");
+      }else{
+        const sc=localStorage.getItem('padel_campos');
+        const sd=localStorage.getItem('padel_default_campo');
+        if(sc){setCamposState(JSON.parse(sc));}
+        else{setCamposState([MESH_CAMPO]);localStorage.setItem('padel_campos',JSON.stringify([MESH_CAMPO]));}
+        if(sd){setDefaultCampoState(sd);}
+        else{setDefaultCampoState(MESH_CAMPO.id);localStorage.setItem('padel_default_campo',MESH_CAMPO.id);}
+      }
       setLoading(false);
     })();
   },[]);
 
-  const setCampos=c=>{setCamposState(c);localStorage.setItem('padel_campos',JSON.stringify(c));};
-  const setDefaultCampo=d=>{setDefaultCampoState(d);localStorage.setItem('padel_default_campo',d);};
+  const persistLocal=list=>localStorage.setItem('padel_campos',JSON.stringify(list));
+  const addCampo=async c=>{
+    const isFirst=campos.length===0;
+    setCamposState(p=>[...p,c]);
+    if(isFirst)setDefaultCampoState(c.id);
+    if(camposDb.current)await supabase.from('campos').insert({id:c.id,name:c.name,is_default:isFirst});
+    else persistLocal([...campos,c]);
+  };
+  const delCampo=async id=>{
+    const next=campos.filter(x=>x.id!==id);
+    setCamposState(next);
+    if(defaultCampo===id)setDefaultCampoState(next[0]?.id||"");
+    if(camposDb.current){
+      await supabase.from('campos').delete().eq('id',id);
+      if(defaultCampo===id&&next[0])await supabase.from('campos').update({is_default:true}).eq('id',next[0].id);
+    }else persistLocal(next);
+  };
+  const setDefaultCampo=async id=>{
+    setDefaultCampoState(id);
+    if(camposDb.current){
+      await supabase.from('campos').update({is_default:false}).neq('id',id);
+      await supabase.from('campos').update({is_default:true}).eq('id',id);
+    }else localStorage.setItem('padel_default_campo',id);
+  };
   const setTheme=t=>{setThemeState(t);localStorage.setItem('padel_theme',t);};
 
   const saveGame=async g=>{
@@ -92,11 +216,14 @@ export default function App(){
   const editGame=g=>{setEdit(g||null);setTab("new");};
 
   const addPlayer=async p=>{
-    const{data}=await supabase.from('players').insert(p).select().single();
+    let{data,error}=await supabase.from('players').insert(p).select().single();
+    if(error){const{posicao,...semPos}=p;({data}=await supabase.from('players').insert(semPos).select().single());}
     setPlayers(prev=>[...prev,data||p]);
   };
   const savePlayer=async p=>{
-    await supabase.from('players').update({name:p.name,color:p.color}).eq('id',p.id);
+    // posicao pode não existir na BD (migração 006) — tenta com, repete sem
+    const{error}=await supabase.from('players').update({name:p.name,color:p.color,posicao:p.posicao||'ambos'}).eq('id',p.id);
+    if(error)await supabase.from('players').update({name:p.name,color:p.color}).eq('id',p.id);
     setPlayers(prev=>prev.map(x=>x.id===p.id?{...x,...p}:x));
   };
   const delPlayer=async id=>{
@@ -123,10 +250,10 @@ export default function App(){
       </header>
       <main className="main">
         {tab==="cal" &&<CalTab players={players} games={games} campos={campos}/>}
-        {tab==="new" &&<NewTab players={players} initial={edit} onSave={saveGame} defaultCampo={defaultCampo} campos={campos} onCancel={()=>{setEdit(null);setTab("cal");}}/>}
-        {tab==="live"&&<LiveTab players={players} campos={campos} defaultCampo={defaultCampo} onSaveGame={saveGame}/>}
+        {tab==="new" &&<NewTab players={players} initial={edit} onSave={saveGame} defaultCampo={defaultCampo} campos={campos} ratings={ratings} onCancel={()=>{setEdit(null);setTab("cal");}}/>}
+        {tab==="live"&&<LiveTab players={players} campos={campos} defaultCampo={defaultCampo} ratings={ratings} onSaveGame={saveGame}/>}
         {tab==="stat"&&<StatsTab players={players} games={games}/>}
-        {tab==="cfg" &&<ConfigTab players={players} games={games} campos={campos} setCampos={setCampos} defaultCampo={defaultCampo} setDefaultCampo={setDefaultCampo} onAddPlayer={addPlayer} onSavePlayer={savePlayer} onDelPlayer={delPlayer} onEditGame={editGame} onDelGame={delGame} theme={theme} setTheme={setTheme}/>}
+        {tab==="cfg" &&<ConfigTab players={players} games={games} campos={campos} defaultCampo={defaultCampo} onAddCampo={addCampo} onDelCampo={delCampo} onSetDefaultCampo={setDefaultCampo} onAddPlayer={addPlayer} onSavePlayer={savePlayer} onDelPlayer={delPlayer} onEditGame={editGame} onDelGame={delGame} theme={theme} setTheme={setTheme}/>}
       </main>
       <nav className="nav">
         {[{id:"cal",i:"📅",l:"Jogos"},{id:"new",i:"➕",l:"Novo"},{id:"live",i:"🔴",l:"Live"},{id:"stat",i:"🏆",l:"Rankings"},{id:"cfg",i:"⚙️",l:"Config"}].map(({id,i,l})=>(
@@ -149,7 +276,37 @@ function CalTab({players,games,campos}){
     return Object.entries(m);
   },[games]);
   if(!games.length)return(<div className="empty"><div style={{fontSize:52}}>🎾</div><div className="et">Sem jogos registados</div><div className="es">Cria o primeiro jogo!</div></div>);
-  return(<div className="scr">{grouped.map(([mo,gs])=>(<div key={mo}><div className="mhdr">{fmtMo(mo)}</div>{gs.map(g=><GCard key={g.id} g={g} gp={gp} campo={getCampo(g.campo)}/>)}</div>))}</div>);
+
+  const resumoNoite=async()=>{
+    const lastDate=[...games].sort((a,b)=>b.date.localeCompare(a.date))[0].date;
+    const night=games.filter(g=>g.date===lastDate);
+    const nw={},nb={};
+    const lines=night.map(g=>{
+      const s1=(g.sets||[]).filter(s=>(+s.t1||0)>(+s.t2||0)).length;
+      const s2=(g.sets||[]).filter(s=>(+s.t2||0)>(+s.t1||0)).length;
+      Object.entries(g.beers||{}).forEach(([id,v])=>{if(+v>0)nb[id]=(nb[id]||0)+ +v;});
+      if(g.jogadoresFixos===false)return`• ${(g.jogadores||[]).map(id=>gp(id).name.split(" ")[0]).join(", ")} — ${s1}-${s2} (rotativo)`;
+      const w=calcWinner(g.sets);
+      if(w)(w===1?g.team1:g.team2||[]).forEach(id=>nw[id]=(nw[id]||0)+1);
+      return`• ${(g.team1||[]).map(id=>gp(id).name.split(" ")[0]).join(" & ")} ${s1}-${s2} ${(g.team2||[]).map(id=>gp(id).name.split(" ")[0]).join(" & ")}`;
+    });
+    const mvpE=Object.entries(nw).sort((a,b)=>b[1]-a[1])[0];
+    const campo=getCampo(night[0]?.campo);
+    let text=`🎾 Padel — ${fmtDate(lastDate)}${campo?` 📍 ${campo}`:""}\n${lines.join("\n")}`;
+    if(mvpE)text+=`\n⭐ MVP: ${gp(mvpE[0]).name.split(" ")[0]} (${mvpE[1]}V)`;
+    const bs=Object.entries(nb).map(([id,v])=>`${gp(id).name.split(" ")[0]} ${v}🍺`).join(" · ");
+    if(bs)text+=`\n🍺 ${bs}`;
+    if(navigator.share){try{await navigator.share({text});return;}catch{/* cancelado */}}
+    try{await navigator.clipboard.writeText(text);alert("Resumo copiado! Cola no WhatsApp 📋");}
+    catch{prompt("Copiar resumo:",text);}
+  };
+
+  return(
+    <div className="scr">
+      <button className="aset" style={{marginBottom:4}} onClick={resumoNoite}>📤 Resumo da última noite (para o grupo)</button>
+      {grouped.map(([mo,gs])=>(<div key={mo}><div className="mhdr">{fmtMo(mo)}</div>{gs.map(g=><GCard key={g.id} g={g} gp={gp} campo={getCampo(g.campo)}/>)}</div>))}
+    </div>
+  );
 }
 
 function GCard({g,gp,campo}){
@@ -232,7 +389,7 @@ function GCard({g,gp,campo}){
 }
 
 /* ── New Tab ────────────────────────────────────────────── */
-function NewTab({players,initial,onSave,onCancel,defaultCampo,campos}){
+function NewTab({players,initial,onSave,onCancel,defaultCampo,campos,ratings}){
   const[f,setF]=useState(()=>initial||emptyGame(defaultCampo));
   useEffect(()=>{setF(initial||emptyGame(defaultCampo));},[initial]);
 
@@ -249,9 +406,9 @@ function NewTab({players,initial,onSave,onCancel,defaultCampo,campos}){
   const setBeer=(pid,v)=>setF(p=>({...p,beers:{...p.beers,[pid]:Math.max(0,+v||0)}}));
   const toggleFixed=()=>setF(p=>({...p,jogadoresFixos:!isFixed,team1:["",""],team2:["",""],jogadores:[]}));
 
-  const sorteio=()=>{
+  const sorteio=(mode='aleatorio')=>{
     if(isFixed){
-      const d=drawTeams(players,[...f.team1,...f.team2]);
+      const d=drawTeams(players,[...f.team1,...f.team2],mode,ratings);
       setF(p=>({...p,team1:d.team1,team2:d.team2}));
     } else {
       const jogs=f.jogadores.filter(Boolean);
@@ -323,7 +480,10 @@ function NewTab({players,initial,onSave,onCancel,defaultCampo,campos}){
       )}
 
       {canDraw&&(
-        <button className="aset sort-btn" onClick={sorteio}>🎲 Sortear Equipas</button>
+        <div style={{display:'flex',gap:8,marginBottom:14}}>
+          <button className="aset sort-btn" style={{marginBottom:0,marginTop:0}} onClick={()=>sorteio('aleatorio')}>🎲 Sortear</button>
+          {isFixed&&<button className="aset sort-btn" style={{marginBottom:0,marginTop:0}} onClick={()=>sorteio('equilibrado')} title="Equipas niveladas pelo rating Elo">⚖️ Equilibrado</button>}
+        </div>
       )}
 
       <div className="fg" style={{marginTop:8}}><label className="fl">🎾 Sets</label>
@@ -376,6 +536,7 @@ function PSel({players,value,onChange,allSel,myVal}){
 
 /* ── Stats Tab ──────────────────────────────────────────── */
 function StatsTab({players,games}){
+  const[view,setView]=useState("rank");
   const[cat,setCat]=useState(0);
   const years=useMemo(()=>{
     const ys=[...new Set(games.map(g=>g.date?.slice(0,4)).filter(Boolean))].sort((a,b)=>b-a);
@@ -384,8 +545,13 @@ function StatsTab({players,games}){
   const[year,setYear]=useState("all");
   const filtered=useMemo(()=>year==="all"?games:games.filter(g=>g.date?.startsWith(year)),[games,year]);
   const st=useMemo(()=>calcStats(players,filtered),[players,filtered]);
+  const elo=useMemo(()=>{
+    const R=calcElo(players,filtered);
+    return players.map(p=>({id:p.id,v:Math.round(R[p.id]??1000)})).sort((a,b)=>b.v-a.v);
+  },[players,filtered]);
   const CATS=[
     {l:"🏆 Vitórias",d:st.wins},
+    {l:"🧠 Nível (Elo)",d:elo},
     {l:"📅 Mais Jogos",d:st.games},
     {l:"🛋️ Menos Jogos",d:st.least},
     {l:"🎾 Sets Ganhos",d:st.sets},
@@ -398,14 +564,196 @@ function StatsTab({players,games}){
   return(
     <div className="scr">
       <div className="ft">Rankings</div>
-      {years.length>1&&(
+      <div className="cscr" style={{marginBottom:6}}>
+        {[{id:"rank",l:"🏆 Rankings"},{id:"duplas",l:"👥 Duplas"},{id:"h2h",l:"⚔️ Frente-a-frente"},{id:"evo",l:"📈 Evolução"},{id:"conq",l:"🎖️ Conquistas"}].map(v=>(
+          <button key={v.id} className={`catb yr-btn${view===v.id?" caton":""}`} onClick={()=>setView(v.id)}>{v.l}</button>
+        ))}
+      </div>
+      {years.length>1&&view!=="conq"&&(
         <div className="cscr" style={{marginBottom:6}}>
           {years.map(y=><button key={y} className={`catb yr-btn${year===y?" caton":""}`} onClick={()=>setYear(y)}>{y==="all"?"Todos os anos":y}</button>)}
         </div>
       )}
-      <div className="cscr">{CATS.map((c,i)=><button key={i} className={`catb${cat===i?" caton":""}`} onClick={()=>setCat(i)}>{c.l}</button>)}</div>
-      <Podium data={cur.d} players={players} pct={cur.pct}/>
-      <div className="rl">{cur.d.map((row,i)=>{const p=players.find(x=>x.id===row.id)||{name:"?",color:"#555"};return(<div key={row.id} className="rr"><span className="rrn">{i+1}</span><span className="rrd" style={{background:p.color}}/><span className="rrname">{p.name}</span><span className="rrv">{cur.pct?`${(row.v*100).toFixed(0)}%`:row.v}</span></div>);})}</div>
+      {view==="rank"&&(<>
+        <div className="cscr">{CATS.map((c,i)=><button key={i} className={`catb${cat===i?" caton":""}`} onClick={()=>setCat(i)}>{c.l}</button>)}</div>
+        <Podium data={cur.d} players={players} pct={cur.pct}/>
+        <div className="rl">{cur.d.map((row,i)=>{const p=players.find(x=>x.id===row.id)||{name:"?",color:"#555"};return(<div key={row.id} className="rr"><span className="rrn">{i+1}</span><span className="rrd" style={{background:p.color}}/><span className="rrname">{p.name}</span><span className="rrv">{cur.pct?`${(row.v*100).toFixed(0)}%`:row.v}</span></div>);})}</div>
+      </>)}
+      {view==="duplas"&&<DuplasView players={players} games={filtered}/>}
+      {view==="h2h"&&<H2HView players={players} games={filtered}/>}
+      {view==="evo"&&<EvoView players={players} games={filtered}/>}
+      {view==="conq"&&<ConquistasView players={players} games={games}/>}
+    </div>
+  );
+}
+
+/* Duplas: desempenho de cada par nos jogos de equipas fixas */
+function DuplasView({players,games}){
+  const gp=id=>players.find(p=>p.id===id);
+  const pairs=useMemo(()=>{
+    const m={};
+    games.forEach(g=>{
+      if(g.jogadoresFixos===false)return;
+      const w=calcWinner(g.sets);if(!w)return;
+      [[g.team1,w===1],[g.team2,w===2]].forEach(([tm,won])=>{
+        const ids=(tm||[]).filter(Boolean);if(ids.length!==2)return;
+        const k=[...ids].sort().join("|");
+        m[k]=m[k]||{ids:[...ids].sort(),w:0,g:0};
+        m[k].g++;if(won)m[k].w++;
+      });
+    });
+    return Object.values(m).sort((a,b)=>(b.w/b.g)-(a.w/a.g)||b.g-a.g);
+  },[games]);
+  if(!pairs.length)return(<div className="empty" style={{minHeight:120}}><span className="es">Sem jogos de equipas fixas</span></div>);
+  return(
+    <div className="rl" style={{marginTop:8}}>
+      {pairs.map((d,i)=>{
+        const[a,b]=d.ids.map(gp);
+        if(!a||!b)return null;
+        return(
+          <div key={d.ids.join()} className="rr">
+            <span className="rrn">{i+1}</span>
+            <span className="gds"><span className="dot" style={{background:a.color}}/><span className="dot" style={{background:b.color}}/></span>
+            <span className="rrname">{a.name.split(" ")[0]} & {b.name.split(" ")[0]}</span>
+            <span style={{fontSize:11,color:'var(--mt)'}}>{d.w}V/{d.g}J</span>
+            <span className="rrv">{Math.round(d.w/d.g*100)}%</span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/* Frente-a-frente entre dois jogadores (em equipas opostas) */
+function H2HView({players,games}){
+  const[a,setA]=useState("");
+  const[b,setB]=useState("");
+  const res=useMemo(()=>{
+    if(!a||!b||a===b)return null;
+    let wa=0,wb=0,tot=0;
+    games.forEach(g=>{
+      if(g.jogadoresFixos===false)return;
+      const w=calcWinner(g.sets);if(!w)return;
+      const t1=(g.team1||[]),t2=(g.team2||[]);
+      const a1=t1.includes(a),a2=t2.includes(a),b1=t1.includes(b),b2=t2.includes(b);
+      if((a1&&b2)||(a2&&b1)){tot++;const aWon=(a1&&w===1)||(a2&&w===2);if(aWon)wa++;else wb++;}
+    });
+    return{wa,wb,tot};
+  },[a,b,games]);
+  const pa=players.find(p=>p.id===a),pb=players.find(p=>p.id===b);
+  return(
+    <div style={{marginTop:8}}>
+      <div className="tgrid" style={{marginBottom:16}}>
+        <select className="fi" style={{cursor:'pointer'}} value={a} onChange={e=>setA(e.target.value)}><option value="">— Jogador —</option>{players.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select>
+        <div className="vsm" style={{paddingTop:10}}>VS</div>
+        <select className="fi" style={{cursor:'pointer'}} value={b} onChange={e=>setB(e.target.value)}><option value="">— Jogador —</option>{players.filter(p=>p.id!==a).map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select>
+      </div>
+      {res&&res.tot>0?(
+        <div style={{textAlign:'center'}}>
+          <div style={{display:'flex',alignItems:'center',justifyContent:'center',gap:18,marginBottom:10}}>
+            <div><div className="pcav" style={{background:pa?.color,margin:'0 auto 6px'}}>{pa?.name[0]}</div><div style={{fontFamily:'Bebas Neue,sans-serif',fontSize:44,color:res.wa>=res.wb?'var(--g)':'var(--t)'}}>{res.wa}</div></div>
+            <div style={{color:'var(--mt)',fontSize:13}}>—</div>
+            <div><div className="pcav" style={{background:pb?.color,margin:'0 auto 6px'}}>{pb?.name[0]}</div><div style={{fontFamily:'Bebas Neue,sans-serif',fontSize:44,color:res.wb>=res.wa?'var(--g)':'var(--t)'}}>{res.wb}</div></div>
+          </div>
+          <div style={{fontSize:12,color:'var(--mt)'}}>{res.tot} confrontos diretos</div>
+        </div>
+      ):(a&&b?<div className="empty" style={{minHeight:80}}><span className="es">Nunca jogaram em equipas opostas</span></div>
+        :<div className="empty" style={{minHeight:80}}><span className="es">Escolhe dois jogadores</span></div>)}
+    </div>
+  );
+}
+
+/* Gráfico SVG da evolução do Elo ao longo dos jogos */
+function EvoView({players,games}){
+  const snaps=useMemo(()=>eloTimeline(players,games),[players,games]);
+  if(snaps.length<2)return(<div className="empty" style={{minHeight:120}}><span className="es">Ainda não há jogos suficientes</span></div>);
+  const W=600,H=240,PAD=8;
+  let mn=Infinity,mx=-Infinity;
+  snaps.forEach(s=>players.forEach(p=>{const v=s.R[p.id];if(v!=null){mn=Math.min(mn,v);mx=Math.max(mx,v);}}));
+  if(mx-mn<40){mx+=20;mn-=20;}
+  const X=i=>PAD+i*(W-2*PAD)/(snaps.length-1);
+  const Y=v=>H-PAD-(v-mn)*(H-2*PAD)/(mx-mn);
+  return(
+    <div style={{marginTop:8}}>
+      <svg viewBox={`0 0 ${W} ${H}`} style={{width:'100%',background:'var(--card)',borderRadius:12,border:'1px solid var(--bd)'}}>
+        <line x1={PAD} y1={Y(1000)} x2={W-PAD} y2={Y(1000)} stroke="var(--bd)" strokeDasharray="4 4"/>
+        {players.map(p=>(
+          <polyline key={p.id} fill="none" stroke={p.color} strokeWidth="2.5" strokeLinejoin="round"
+            points={snaps.map((s,i)=>`${X(i)},${Y(s.R[p.id]??1000)}`).join(" ")}/>
+        ))}
+      </svg>
+      <div style={{display:'flex',flexWrap:'wrap',gap:10,marginTop:10,justifyContent:'center'}}>
+        {players.map(p=>{
+          const last=snaps[snaps.length-1].R[p.id];
+          return(<span key={p.id} style={{display:'flex',alignItems:'center',gap:5,fontSize:11,color:'var(--t)'}}><span className="dot" style={{background:p.color}}/>{p.name.split(" ")[0]} <b style={{color:'var(--g)'}}>{Math.round(last??1000)}</b></span>);
+        })}
+      </div>
+      <div style={{fontSize:10,color:'var(--mt)',textAlign:'center',marginTop:6}}>Nível Elo jogo a jogo · linha tracejada = 1000 (início)</div>
+    </div>
+  );
+}
+
+/* Conquistas / badges + MVP da última noite */
+function ConquistasView({players,games}){
+  const st=useMemo(()=>calcStats(players,games),[players,games]);
+  const R=useMemo(()=>calcElo(players,games),[players,games]);
+  const byId=k=>Object.fromEntries(st[k].map(r=>[r.id,r.v]));
+  const wins=byId("wins"),gs=byId("games"),beers=byId("beers"),streak=byId("streak");
+  const topOf=o=>{const e=Object.entries(o).sort((a,b)=>b[1]-a[1])[0];return e&&e[1]>0?e[0]:null;};
+  const topElo=players.length?[...players].sort((a,b)=>(R[b.id]??0)-(R[a.id]??0))[0]?.id:null;
+  // Tie-breaks ganhos: sets 7-6
+  const tbWins={};
+  games.forEach(g=>{if(g.jogadoresFixos===false)return;(g.sets||[]).forEach(s=>{
+    const t1=+s.t1||0,t2=+s.t2||0;
+    if(t1===7&&t2===6)(g.team1||[]).forEach(id=>tbWins[id]=(tbWins[id]||0)+1);
+    if(t2===7&&t1===6)(g.team2||[]).forEach(id=>tbWins[id]=(tbWins[id]||0)+1);
+  });});
+  // MVP da última noite
+  const lastDate=[...games].sort((a,b)=>b.date.localeCompare(a.date))[0]?.date;
+  let mvp=null;
+  if(lastDate){
+    const night=games.filter(g=>g.date===lastDate);
+    const nw={};
+    night.forEach(g=>{if(g.jogadoresFixos===false)return;const w=calcWinner(g.sets);if(!w)return;(w===1?g.team1:g.team2||[]).forEach(id=>nw[id]=(nw[id]||0)+1);});
+    mvp=topOf(nw);
+  }
+  const badge=(id)=>{
+    const list=[];
+    if(mvp===id)list.push("⭐ MVP da última noite");
+    if(topOf(wins)===id)list.push("🏆 Rei das vitórias");
+    if(topElo===id&&(gs[id]||0)>0)list.push("🐐 Nível máximo (Elo)");
+    if(topOf(beers)===id)list.push("🍺 Patrocinador oficial");
+    if(topOf(tbWins)===id)list.push("🧊 Rei do tie-break");
+    if((streak[id]||0)>=5)list.push("📈 Imparável (streak 5+)");
+    else if((streak[id]||0)>=3)list.push("🔥 Em chamas (streak 3+)");
+    if((gs[id]||0)>=50)list.push("💯 Veterano (50 jogos)");
+    else if((gs[id]||0)>=10)list.push("🎾 Regular (10 jogos)");
+    if((wins[id]||0)>=1&&list.length===0)list.push("🥇 Primeira vitória");
+    if(!list.length)list.push("🌱 A começar");
+    return list;
+  };
+  const mvpP=players.find(p=>p.id===mvp);
+  return(
+    <div style={{marginTop:8}}>
+      {mvpP&&(
+        <div className="gc" style={{padding:'14px 16px',marginBottom:14,borderColor:'var(--g)',textAlign:'center'}}>
+          <div style={{fontSize:11,color:'var(--mt)',letterSpacing:1,textTransform:'uppercase',marginBottom:4}}>⭐ MVP de {fmtDate(lastDate)}</div>
+          <div style={{fontSize:18,fontWeight:700,color:'var(--g)'}}>{mvpP.name}</div>
+        </div>
+      )}
+      <div className="pg">
+        {players.map(p=>(
+          <div key={p.id} className="pc" style={{alignItems:'flex-start'}}>
+            <div className="pcav" style={{background:p.color}}>{p.name[0].toUpperCase()}</div>
+            <div className="pci">
+              <div className="pcn">{p.name}</div>
+              <div style={{display:'flex',flexWrap:'wrap',gap:5,marginTop:6}}>
+                {badge(p.id).map(b=><span key={b} className="bc" style={{borderColor:'var(--bd)',color:'var(--t)'}}>{b}</span>)}
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
@@ -425,7 +773,7 @@ function Podium({data,players,pct}){
 }
 
 /* ── Config Tab ─────────────────────────────────────────── */
-function ConfigTab({players,games,campos,setCampos,defaultCampo,setDefaultCampo,onAddPlayer,onSavePlayer,onDelPlayer,onEditGame,onDelGame,theme,setTheme}){
+function ConfigTab({players,games,campos,defaultCampo,onAddCampo,onDelCampo,onSetDefaultCampo,onAddPlayer,onSavePlayer,onDelPlayer,onEditGame,onDelGame,theme,setTheme}){
   const[sec,setSec]=useState("jogadores");
   return(
     <div className="scr">
@@ -436,7 +784,7 @@ function ConfigTab({players,games,campos,setCampos,defaultCampo,setDefaultCampo,
         ))}
       </div>
       {sec==="jogadores"&&<PlayersSection players={players} games={games} onAdd={onAddPlayer} onSave={onSavePlayer} onDel={onDelPlayer}/>}
-      {sec==="campos"&&<CamposSection campos={campos} setCampos={setCampos} defaultCampo={defaultCampo} setDefaultCampo={setDefaultCampo}/>}
+      {sec==="campos"&&<CamposSection campos={campos} defaultCampo={defaultCampo} onAdd={onAddCampo} onDel={onDelCampo} onSetDefault={onSetDefaultCampo}/>}
       {sec==="tema"&&<ThemeSection theme={theme} setTheme={setTheme}/>}
       {sec==="watch"&&<WatchSection/>}
       {sec==="jogos"&&<GamesAdminSection games={games} players={players} onEdit={onEditGame} onDel={onDelGame}/>}
@@ -529,11 +877,22 @@ function WatchSection(){
   );
 }
 
+function PosSel({value,onChange,small}){
+  return(
+    <div style={{display:'flex',gap:6,marginTop:small?6:10}}>
+      {POSICOES.map(p=>(
+        <button key={p.id} className={`catb${(value||'ambos')===p.id?' caton':''}`} style={{flex:1,padding:small?'4px 6px':'6px 8px',fontSize:11}} onClick={()=>onChange(p.id)}>{p.l}</button>
+      ))}
+    </div>
+  );
+}
+
 function PlayersSection({players,games,onAdd,onSave,onDel}){
   const[name,setName]=useState("");
   const[color,setColor]=useState(COLORS[0]);
+  const[posicao,setPosicao]=useState("ambos");
   const[editing,setEditing]=useState(null);
-  const add=()=>{if(!name.trim())return;onAdd({id:uid(),name:name.trim(),color});setName("");};
+  const add=()=>{if(!name.trim())return;onAdd({id:uid(),name:name.trim(),color,posicao});setName("");setPosicao("ambos");};
   const gs=id=>{
     let w=0,g=0;
     games.forEach(gm=>{
@@ -547,7 +906,7 @@ function PlayersSection({players,games,onAdd,onSave,onDel}){
     });
     return{w,g};
   };
-  const startEdit=p=>setEditing({id:p.id,name:p.name,color:p.color});
+  const startEdit=p=>setEditing({id:p.id,name:p.name,color:p.color,posicao:p.posicao||'ambos'});
   const saveEdit=()=>{if(!editing.name.trim())return;onSave(editing);setEditing(null);};
   return(
     <div>
@@ -559,54 +918,49 @@ function PlayersSection({players,games,onAdd,onSave,onDel}){
             <div className="pci pef">
               <input className="fi pei" value={editing.name} onChange={e=>setEditing(v=>({...v,name:e.target.value}))} onKeyDown={e=>{if(e.key==="Enter")saveEdit();if(e.key==="Escape")setEditing(null);}} autoFocus/>
               <div className="cp" style={{marginTop:8}}>{COLORS.map(c=><button key={c} className={`cd${editing.color===c?" cda":""}`} style={{background:c}} onClick={()=>setEditing(v=>({...v,color:c}))}/>)}</div>
+              <PosSel small value={editing.posicao} onChange={v=>setEditing(x=>({...x,posicao:v}))}/>
               <div className="pea"><button className="btnc peb" onClick={()=>setEditing(null)}>Cancelar</button><button className="btns peb" onClick={saveEdit}>Guardar</button></div>
             </div>
           </div>
         );
-        return(<div key={p.id} className="pc"><div className="pcav" style={{background:p.color}}>{p.name[0].toUpperCase()}</div><div className="pci"><div className="pcn">{p.name}</div><div className="pcs">{s.g} jogos · {s.w} vitórias</div></div><button className="pcd" title="Editar" onClick={()=>startEdit(p)}>✏️</button><button className="pcd" onClick={()=>onDel(p.id)}>✕</button></div>);
+        return(<div key={p.id} className="pc"><div className="pcav" style={{background:p.color}}>{p.name[0].toUpperCase()}</div><div className="pci"><div className="pcn">{p.name} {posLabel(p.posicao)}</div><div className="pcs">{s.g} jogos · {s.w} vitórias{p.posicao&&p.posicao!=='ambos'?` · joga à ${p.posicao}`:''}</div></div><button className="pcd" title="Editar" onClick={()=>startEdit(p)}>✏️</button><button className="pcd" onClick={()=>onDel(p.id)}>✕</button></div>);
       })}</div>
       <div className="fg" style={{marginTop:24}}>
         <label className="fl">➕ Adicionar Jogador</label>
         <input className="fi" placeholder="Nome do jogador" value={name} onChange={e=>setName(e.target.value)} onKeyDown={e=>e.key==="Enter"&&add()}/>
         <div className="cp" style={{marginTop:10}}>{COLORS.map(c=><button key={c} className={`cd${color===c?" cda":""}`} style={{background:c}} onClick={()=>setColor(c)}/>)}</div>
+        <PosSel value={posicao} onChange={setPosicao}/>
         <button className="btns" style={{width:"100%",marginTop:12}} onClick={add}>Adicionar</button>
       </div>
     </div>
   );
 }
 
-function CamposSection({campos,setCampos,defaultCampo,setDefaultCampo}){
+function CamposSection({campos,defaultCampo,onAdd,onDel,onSetDefault}){
   const[name,setName]=useState("");
-  const addCampo=()=>{
+  const add=()=>{
     if(!name.trim())return;
-    const novo={id:uid(),name:name.trim()};
-    const next=[...campos,novo];
-    setCampos(next);
-    if(!defaultCampo)setDefaultCampo(novo.id);
+    onAdd({id:uid(),name:name.trim()});
     setName("");
-  };
-  const delCampo=id=>{
-    const next=campos.filter(c=>c.id!==id);
-    setCampos(next);
-    if(defaultCampo===id)setDefaultCampo(next[0]?.id||"");
   };
   return(
     <div>
+      <div style={{fontSize:11,color:'var(--mt)',marginBottom:12}}>Os campos são partilhados por todos os dispositivos.</div>
       {campos.length===0&&<div className="empty" style={{minHeight:80}}><span className="es">Sem campos definidos.</span></div>}
       <div className="pg">
         {campos.map(c=>(
           <div key={c.id} className="pc">
             <span style={{fontSize:18}}>📍</span>
             <div className="pci"><div className="pcn">{c.name}</div>{defaultCampo===c.id&&<div className="pcs" style={{color:'var(--g)'}}>Campo por defeito</div>}</div>
-            <button className="pcd" style={{color:defaultCampo===c.id?'var(--g)':'var(--mt)',fontSize:15}} onClick={()=>setDefaultCampo(c.id)} title="Definir como padrão">⭐</button>
-            <button className="pcd" onClick={()=>delCampo(c.id)}>✕</button>
+            <button className="pcd" style={{color:defaultCampo===c.id?'var(--g)':'var(--mt)',fontSize:15}} onClick={()=>onSetDefault(c.id)} title="Definir como padrão">⭐</button>
+            <button className="pcd" onClick={()=>onDel(c.id)}>✕</button>
           </div>
         ))}
       </div>
       <div className="fg" style={{marginTop:24}}>
         <label className="fl">➕ Adicionar Campo / Local</label>
-        <input className="fi" placeholder="Ex: Campo Municipal, Padel Center…" value={name} onChange={e=>setName(e.target.value)} onKeyDown={e=>e.key==="Enter"&&addCampo()}/>
-        <button className="btns" style={{width:"100%",marginTop:12}} onClick={addCampo}>Adicionar Campo</button>
+        <input className="fi" placeholder="Ex: Campo Municipal, Padel Center…" value={name} onChange={e=>setName(e.target.value)} onKeyDown={e=>e.key==="Enter"&&add()}/>
+        <button className="btns" style={{width:"100%",marginTop:12}} onClick={add}>Adicionar Campo</button>
       </div>
     </div>
   );
@@ -742,7 +1096,7 @@ function useAnnounce(live,sc,names,enabled){
   },[live.point_log,enabled]);
 }
 
-function LiveTab({players,campos,defaultCampo,onSaveGame}){
+function LiveTab({players,campos,defaultCampo,ratings,onSaveGame}){
   const[live,setLive]=useState(null);
   const[view,setView]=useState("lobby");
   const[ready,setReady]=useState(false);
@@ -842,7 +1196,7 @@ function LiveTab({players,campos,defaultCampo,onSaveGame}){
   };
 
   if(!ready)return(<div className="empty"><span style={{fontSize:32}}>🔴</span><span className="es">A ligar…</span></div>);
-  if(!live)return(<LiveSetup players={players} campos={campos} defaultCampo={defaultCampo} onStart={start}/>);
+  if(!live)return(<LiveSetup players={players} campos={campos} defaultCampo={defaultCampo} ratings={ratings} onStart={start}/>);
   if(view==="ctrl")return(<LiveCtrl live={live} gp={gp} onPoint={addPoint} onUndo={undoPoint} onFinish={finish} onCancel={cancel} onBack={()=>setView("lobby")}/>);
   if(view==="board")return(<LiveBoard live={live} gp={gp} onBack={()=>setView("lobby")}/>);
   return(
@@ -858,7 +1212,7 @@ function LiveTab({players,campos,defaultCampo,onSaveGame}){
   );
 }
 
-function LiveSetup({players,campos,defaultCampo,onStart}){
+function LiveSetup({players,campos,defaultCampo,ratings,onStart}){
   const[team1,setTeam1]=useState(["",""]);
   const[team2,setTeam2]=useState(["",""]);
   const[campo,setCampo]=useState(defaultCampo||"");
@@ -885,7 +1239,10 @@ function LiveSetup({players,campos,defaultCampo,onStart}){
         </div>
       </div>
       {players.length>=4&&(
-        <button className="aset sort-btn" onClick={()=>{const d=drawTeams(players,[...team1,...team2]);setTeam1(d.team1);setTeam2(d.team2);}}>🎲 Sortear Equipas</button>
+        <div style={{display:'flex',gap:8,marginBottom:14}}>
+          <button className="aset sort-btn" style={{marginBottom:0}} onClick={()=>{const d=drawTeams(players,[...team1,...team2]);setTeam1(d.team1);setTeam2(d.team2);}}>🎲 Sortear</button>
+          <button className="aset sort-btn" style={{marginBottom:0}} onClick={()=>{const d=drawTeams(players,[...team1,...team2],'equilibrado',ratings);setTeam1(d.team1);setTeam2(d.team2);}} title="Equipas niveladas pelo rating Elo">⚖️ Equilibrado</button>
+        </div>
       )}
       {campos.length>0&&(
         <div className="fg"><label className="fl">📍 Campo</label>
@@ -919,6 +1276,19 @@ function ScoreGrid({live,gp,big}){
     if(v)speak("Som ativado");else window.speechSynthesis?.cancel();
   };
   useAnnounce(live,sc,names,sound);
+  // ⏱ duração do jogo (a partir de created_at), atualizada a cada 30s
+  const[,tick]=useState(0);
+  useEffect(()=>{
+    if(sc.finished)return;
+    const t=setInterval(()=>tick(x=>x+1),30000);
+    return()=>clearInterval(t);
+  },[sc.finished]);
+  const mins=live.created_at?Math.max(0,Math.round((Date.now()-new Date(live.created_at).getTime())/60000)):null;
+  // 🔥 pontos consecutivos da mesma equipa (ignora marcadores de serviço)
+  const ptsOnly=(live.point_log||[]).filter(v=>v===0||v===1);
+  let run=0;
+  for(let i=ptsOnly.length-1;i>=0&&ptsOnly[i]===ptsOnly[ptsOnly.length-1];i--)run++;
+  const runTeam=ptsOnly[ptsOnly.length-1];
   return(
     <div className={`lv-grid${big?' lv-gridb':''}`}>
       <div className="lv-hd"><span><button className="lv-snd" title="Anúncio de voz" onClick={toggleSound}>{sound?'🔊':'🔇'}</button></span><span>Sets</span><span>Jogos</span><span>Pontos</span></div>
@@ -933,6 +1303,12 @@ function ScoreGrid({live,gp,big}){
       {sc.sets.length>0&&<div className="lv-sets">{sc.sets.map(s=>`${s.t1}-${s.t2}`).join("  ·  ")}</div>}
       {sc.tb&&<div className="lv-tbk">TIE-BREAK</div>}
       {sc.needsServe&&<div className="lv-tbk">🎾 A DEFINIR QUEM SERVE — TOCA NA EQUIPA</div>}
+      {(mins!=null||run>=3)&&(
+        <div style={{display:'flex',justifyContent:'center',gap:14,fontSize:11,color:'var(--mt)',paddingTop:6}}>
+          {mins!=null&&<span>⏱ {mins} min</span>}
+          {run>=3&&!sc.finished&&<span style={{color:'var(--g)'}}>🔥 {names[runTeam]?.split(" ")[0]||`Eq.${runTeam+1}`}: {run} pontos seguidos</span>}
+        </div>
+      )}
       {sc.finished&&<div className="lv-fin">🏆 {names[sc.winner-1]} venceu!</div>}
     </div>
   );
