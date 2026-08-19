@@ -1,5 +1,5 @@
-import { useState, useEffect, useMemo } from "react";
-import { supabase } from "./supabase.js";
+import { useState, useEffect, useMemo, useRef } from "react";
+import { supabase, supabaseUrl, supabaseKey } from "./supabase.js";
 
 const COLORS = ["#00e676","#ff6b35","#00b0ff","#e040fb","#ffea00","#ff4444","#00bfa5","#ff6d00","#f472b6","#a78bfa"];
 const uid = () => Math.random().toString(36).slice(2,10);
@@ -17,6 +17,16 @@ function calcWinner(sets){
   let a=0,b=0;
   (sets||[]).forEach(s=>{const t1=+s.t1||0,t2=+s.t2||0;if(t1>t2)a++;else if(t2>t1)b++;});
   return a>b?1:b>a?2:0;
+}
+
+// Sorteio de equipas: mantém os jogadores já selecionados, completa até 4
+// com aleatórios da base, e baralha os 4 pelos dois lados.
+// 4 selecionados → baralha só esses; 1-3 → esses + aleatórios; 0 → 4 aleatórios.
+function drawTeams(players,selectedIds){
+  const sel=[...new Set(selectedIds.filter(Boolean))];
+  const rest=players.map(p=>p.id).filter(id=>!sel.includes(id)).sort(()=>Math.random()-.5);
+  const pool=[...sel,...rest].slice(0,4).sort(()=>Math.random()-.5);
+  return{team1:[pool[0]||"",pool[1]||""],team2:[pool[2]||"",pool[3]||""]};
 }
 
 const DEMO=[
@@ -241,11 +251,8 @@ function NewTab({players,initial,onSave,onCancel,defaultCampo,campos}){
 
   const sorteio=()=>{
     if(isFixed){
-      // Usa apenas os jogadores já selecionados; só recorre à BD se nenhum estiver escolhido
-      const selected=[...f.team1,...f.team2].filter(Boolean);
-      const base=selected.length>0 ? selected : players.map(p=>p.id);
-      const pool=[...base].sort(()=>Math.random()-.5);
-      setF(p=>({...p,team1:[pool[0]||"",pool[1]||""],team2:[pool[2]||"",pool[3]||""]}));
+      const d=drawTeams(players,[...f.team1,...f.team2]);
+      setF(p=>({...p,team1:d.team1,team2:d.team2}));
     } else {
       const jogs=f.jogadores.filter(Boolean);
       if(jogs.length<4)return;
@@ -424,13 +431,14 @@ function ConfigTab({players,games,campos,setCampos,defaultCampo,setDefaultCampo,
     <div className="scr">
       <div className="ft">Configurações</div>
       <div className="cscr" style={{marginBottom:20}}>
-        {[{id:"jogadores",l:"👥 Jogadores"},{id:"campos",l:"📍 Campos"},{id:"tema",l:"🎨 Tema"},{id:"jogos",l:"🎾 Jogos"}].map(s=>(
+        {[{id:"jogadores",l:"👥 Jogadores"},{id:"campos",l:"📍 Campos"},{id:"tema",l:"🎨 Tema"},{id:"watch",l:"⌚ Watch"},{id:"jogos",l:"🎾 Jogos"}].map(s=>(
           <button key={s.id} className={`catb${sec===s.id?" caton":""}`} onClick={()=>setSec(s.id)}>{s.l}</button>
         ))}
       </div>
       {sec==="jogadores"&&<PlayersSection players={players} games={games} onAdd={onAddPlayer} onSave={onSavePlayer} onDel={onDelPlayer}/>}
       {sec==="campos"&&<CamposSection campos={campos} setCampos={setCampos} defaultCampo={defaultCampo} setDefaultCampo={setDefaultCampo}/>}
       {sec==="tema"&&<ThemeSection theme={theme} setTheme={setTheme}/>}
+      {sec==="watch"&&<WatchSection/>}
       {sec==="jogos"&&<GamesAdminSection games={games} players={players} onEdit={onEditGame} onDel={onDelGame}/>}
     </div>
   );
@@ -451,6 +459,53 @@ function ThemeSection({theme,setTheme}){
             <span style={{color:theme===t.id?'var(--g)':'var(--bd)',fontSize:20,flexShrink:0}}>{theme===t.id?"✓":"○"}</span>
           </button>
         ))}
+      </div>
+    </div>
+  );
+}
+
+function CopyRow({label,value}){
+  const[ok,setOk]=useState(false);
+  const copy=async()=>{
+    try{await navigator.clipboard.writeText(value);setOk(true);setTimeout(()=>setOk(false),1600);}
+    catch{prompt("Copiar manualmente:",value);}
+  };
+  return(
+    <div className="wrow">
+      <div className="wri"><div className="wrl">{label}</div><div className="wrv">{value}</div></div>
+      <button className={`wrc${ok?" wrok":""}`} onClick={copy}>{ok?"✓ Copiado":"Copiar"}</button>
+    </div>
+  );
+}
+
+function WatchSection(){
+  return(
+    <div>
+      <div style={{fontSize:12,color:'var(--mt)',marginBottom:16,lineHeight:1.5}}>
+        Cria os atalhos no iPhone (app <b style={{color:'var(--t)'}}>Atalhos</b>) com a ação
+        <b style={{color:'var(--t)'}}> "Obter conteúdos de URL"</b>, método <b style={{color:'var(--t)'}}>POST</b>,
+        e cola os valores abaixo. Ativa <b style={{color:'var(--t)'}}>"Mostrar no Apple Watch"</b> em cada atalho.
+        Depois partilha-os com o grupo por link iCloud (manter premido → Partilhar).
+      </div>
+      <div className="fg"><label className="fl">🟢 Atalho — Ponto Equipa 1</label>
+        <CopyRow label="URL" value={`${supabaseUrl}/rest/v1/rpc/add_live_point`}/>
+        <CopyRow label="Corpo do pedido (JSON)" value={'{"team": 0}'}/>
+      </div>
+      <div className="fg"><label className="fl">🟠 Atalho — Ponto Equipa 2</label>
+        <CopyRow label="URL (igual ao anterior)" value={`${supabaseUrl}/rest/v1/rpc/add_live_point`}/>
+        <CopyRow label="Corpo do pedido (JSON)" value={'{"team": 1}'}/>
+      </div>
+      <div className="fg"><label className="fl">↩️ Atalho — Desfazer (opcional)</label>
+        <CopyRow label="URL" value={`${supabaseUrl}/rest/v1/rpc/undo_live_point`}/>
+        <CopyRow label="Corpo do pedido (JSON)" value={"{}"}/>
+      </div>
+      <div className="fg"><label className="fl">🔑 Cabeçalhos (iguais nos 3 atalhos)</label>
+        <CopyRow label="apikey" value={supabaseKey||""}/>
+        <CopyRow label="Content-Type" value="application/json"/>
+      </div>
+      <div style={{fontSize:11,color:'var(--mt)',lineHeight:1.5}}>
+        Os atalhos marcam pontos no jogo ativo do separador 🔴 Live. Sem jogo ativo não fazem nada.
+        A chave é a pública da app (anon) — pode ser partilhada com o grupo.
       </div>
     </div>
   );
@@ -584,12 +639,16 @@ const PTLBL=["0","15","30","40","AD"];
 
 // Deriva o resultado completo reproduzindo o log de pontos (0 = eq.1, 1 = eq.2).
 // Desfazer = remover o último ponto do log. Melhor de 3 sets, tie-break a 6-6.
-function deriveScore(log,format){
+function deriveScore(log,format,firstServer){
   let pts=[0,0],games=[0,0],sets=[],tb=false,tbp=[0,0],finished=false,winner=0;
+  // gp = jogos completados (o tie-break conta como um); a equipa a servir alterna
+  // a cada jogo. No tie-break o 1.º ponto é de quem estava de serviço e depois
+  // alterna a cada 2 pontos.
+  let gp=0,tbStart=0;
   const winGame=t=>{
-    const o=1-t;pts=[0,0];games=[...games];games[t]++;
+    const o=1-t;pts=[0,0];games=[...games];games[t]++;gp++;
     if(games[t]>=6&&games[t]-games[o]>=2){sets.push({t1:games[0],t2:games[1]});games=[0,0];}
-    else if(games[t]===6&&games[o]===6){tb=true;tbp=[0,0];}
+    else if(games[t]===6&&games[o]===6){tb=true;tbp=[0,0];tbStart=firstServer!=null?(firstServer+gp)%2:0;}
   };
   for(const t of log){
     if(finished)break;
@@ -599,7 +658,7 @@ function deriveScore(log,format){
       if(tbp[t]>=7&&tbp[t]-tbp[o]>=2){
         games=[...games];games[t]++;
         sets.push({t1:games[0],t2:games[1]});
-        games=[0,0];tb=false;tbp=[0,0];
+        games=[0,0];tb=false;tbp=[0,0];gp++;
       }
     }else{
       pts=[...pts];
@@ -613,7 +672,44 @@ function deriveScore(log,format){
     if(s1>=2||s2>=2){finished=true;winner=s1>s2?1:2;}
   }
   const s1=sets.filter(s=>s.t1>s.t2).length,s2=sets.filter(s=>s.t2>s.t1).length;
-  return{pts,games,sets,tb,tbp,finished,winner,setsWon:[s1,s2]};
+  let serving=null;
+  if(firstServer!=null&&!finished){
+    serving=tb?(tbStart+Math.floor((tbp[0]+tbp[1]+1)/2))%2:(firstServer+gp)%2;
+  }
+  return{pts,games,sets,tb,tbp,finished,winner,setsWon:[s1,s2],serving};
+}
+
+// Voz para anúncio de pontos (Web Speech API, pt-PT)
+const PTSAY=["zero","quinze","trinta","quarenta"];
+function speak(txt){
+  try{
+    if(!('speechSynthesis'in window))return;
+    const u=new SpeechSynthesisUtterance(txt);
+    u.lang='pt-PT';u.rate=1.05;
+    window.speechSynthesis.cancel();
+    window.speechSynthesis.speak(u);
+  }catch{}
+}
+function useAnnounce(live,sc,names,enabled){
+  const prev=useRef(null);
+  useEffect(()=>{
+    const len=(live.point_log||[]).length;
+    const p=prev.current;
+    prev.current={len,sc};
+    if(!enabled||p===null||len===p.len)return;
+    if(len<p.len){speak("Correção");return;}
+    if(sc.finished){speak(`Jogo, set e partida! Vitória de ${names[sc.winner-1]}`);return;}
+    if(sc.sets.length>p.sc.sets.length){speak(`Set! ${sc.setsWon[0]} a ${sc.setsWon[1]} em sets`);return;}
+    if(sc.tb&&!p.sc.tb){speak("Jogo! Seis iguais — tie-break");return;}
+    if(sc.games[0]!==p.sc.games[0]||sc.games[1]!==p.sc.games[1]){speak(`Jogo! ${sc.games[0]} a ${sc.games[1]}`);return;}
+    if(sc.tb){speak(`${sc.tbp[0]}, ${sc.tbp[1]}`);return;}
+    const[a,b]=sc.pts;
+    if(a===4){speak(`Vantagem ${names[0]}`);return;}
+    if(b===4){speak(`Vantagem ${names[1]}`);return;}
+    if(a===3&&b===3){speak(live.format==='golden'?"Quarenta iguais — ponto de ouro!":"Quarenta iguais");return;}
+    if(a===b){speak(`${PTSAY[a]} iguais`);return;}
+    speak(`${PTSAY[a]}, ${PTSAY[b]}`);
+  },[live.point_log,enabled]);
 }
 
 function LiveTab({players,campos,defaultCampo,onSaveGame}){
@@ -641,8 +737,13 @@ function LiveTab({players,campos,defaultCampo,onSaveGame}){
   const gp=id=>players.find(p=>p.id===id)||{id,name:"?",color:"#555"};
 
   const start=async cfg=>{
-    const row={id:uid(),date:today(),campo:cfg.campo,team1:cfg.team1,team2:cfg.team2,format:cfg.format,point_log:[],status:'active'};
-    const{data}=await supabase.from('live_games').insert(row).select().single();
+    const row={id:uid(),date:today(),campo:cfg.campo,team1:cfg.team1,team2:cfg.team2,format:cfg.format,first_server:cfg.firstServer,point_log:[],status:'active'};
+    let{data,error}=await supabase.from('live_games').insert(row).select().single();
+    if(error){
+      // BD ainda sem a coluna first_server (migração 005 por aplicar) — insere sem ela
+      const{first_server,...semSrv}=row;
+      ({data}=await supabase.from('live_games').insert(semSrv).select().single());
+    }
     setLive(data||row);setView("ctrl");
   };
 
@@ -690,6 +791,7 @@ function LiveSetup({players,campos,defaultCampo,onStart}){
   const[team2,setTeam2]=useState(["",""]);
   const[campo,setCampo]=useState(defaultCampo||"");
   const[format,setFormat]=useState("golden");
+  const[srv,setSrv]=useState(0);
   const allSel=[...team1,...team2].filter(Boolean);
   const can=team1.every(Boolean)&&team2.every(Boolean);
   const setT=(setter,arr,i,v)=>setter(arr.map((x,j)=>j===i?v:x));
@@ -703,6 +805,9 @@ function LiveSetup({players,campos,defaultCampo,onStart}){
           <div className="tc"><div className="tch t2h">Equipa 2</div>{[0,1].map(i=><PSel key={i} players={players} value={team2[i]} onChange={v=>setT(setTeam2,team2,i,v)} allSel={allSel} myVal={team2[i]}/>)}</div>
         </div>
       </div>
+      {players.length>=4&&(
+        <button className="aset sort-btn" onClick={()=>{const d=drawTeams(players,[...team1,...team2]);setTeam1(d.team1);setTeam2(d.team2);}}>🎲 Sortear Equipas</button>
+      )}
       {campos.length>0&&(
         <div className="fg"><label className="fl">📍 Campo</label>
           <select className="fi" style={{cursor:'pointer'}} value={campo} onChange={e=>setCampo(e.target.value)}>
@@ -717,22 +822,37 @@ function LiveSetup({players,campos,defaultCampo,onStart}){
           <button className={`catb${format==='advantage'?' caton':''}`} style={{flex:1,padding:10,fontSize:12}} onClick={()=>setFormat('advantage')}>♾️ Vantagens</button>
         </div>
       </div>
-      <button className="btns" style={{width:'100%',padding:16,fontSize:16}} disabled={!can} onClick={()=>onStart({team1,team2,campo,format})}>🔴 Iniciar Jogo</button>
+      <div className="fg"><label className="fl">🎾 Quem serve primeiro</label>
+        <div style={{display:'flex',gap:8}}>
+          {[0,1].map(t=>{
+            const tn=[team1,team2][t].filter(Boolean).map(id=>players.find(p=>p.id===id)?.name?.split(" ")[0]).join(" & ");
+            return(<button key={t} className={`catb${srv===t?' caton':''}`} style={{flex:1,padding:10,fontSize:12}} onClick={()=>setSrv(t)}>{t===0?'🟢':'🟠'} {tn||`Equipa ${t+1}`}</button>);
+          })}
+        </div>
+      </div>
+      <button className="btns" style={{width:'100%',padding:16,fontSize:16}} disabled={!can} onClick={()=>onStart({team1,team2,campo,format,firstServer:srv})}>🔴 Iniciar Jogo</button>
       <div style={{fontSize:11,color:'var(--mt)',marginTop:12,textAlign:'center'}}>Melhor de 3 sets · tie-break a 6-6</div>
     </div>
   );
 }
 
 function ScoreGrid({live,gp,big}){
-  const sc=deriveScore(live.point_log||[],live.format);
+  const sc=deriveScore(live.point_log||[],live.format,live.first_server);
   const names=[live.team1.map(id=>gp(id).name).join(" & "),live.team2.map(id=>gp(id).name).join(" & ")];
   const colors=[live.team1.map(id=>gp(id).color),live.team2.map(id=>gp(id).color)];
+  const[sound,setSound]=useState(()=>localStorage.getItem('padel_sound')==='1');
+  const toggleSound=e=>{
+    e.stopPropagation(); // o placar full-screen fecha ao tocar; o botão não deve fechar
+    const v=!sound;setSound(v);localStorage.setItem('padel_sound',v?'1':'0');
+    if(v)speak("Som ativado");else window.speechSynthesis?.cancel();
+  };
+  useAnnounce(live,sc,names,sound);
   return(
     <div className={`lv-grid${big?' lv-gridb':''}`}>
-      <div className="lv-hd"><span/><span>Sets</span><span>Jogos</span><span>Pontos</span></div>
+      <div className="lv-hd"><span><button className="lv-snd" title="Anúncio de voz" onClick={toggleSound}>{sound?'🔊':'🔇'}</button></span><span>Sets</span><span>Jogos</span><span>Pontos</span></div>
       {[0,1].map(t=>(
         <div key={t} className={`lv-row${sc.finished&&sc.winner===t+1?' lv-win':''}`}>
-          <span className="lv-nm"><span className="gds">{colors[t].map((c,i)=><span key={i} className="dot" style={{background:c}}/>)}</span>{names[t]}</span>
+          <span className="lv-nm"><span className="gds">{colors[t].map((c,i)=><span key={i} className="dot" style={{background:c}}/>)}</span>{names[t]}{sc.serving===t&&<span className="lv-srv" title="A servir">🎾</span>}</span>
           <span className="lv-v">{sc.setsWon[t]}</span>
           <span className="lv-v">{sc.games[t]}</span>
           <span className="lv-v lv-pt">{sc.tb?sc.tbp[t]:PTLBL[sc.pts[t]]}</span>
@@ -746,7 +866,7 @@ function ScoreGrid({live,gp,big}){
 }
 
 function LiveCtrl({live,gp,onPoint,onUndo,onFinish,onCancel,onBack}){
-  const sc=deriveScore(live.point_log||[],live.format);
+  const sc=deriveScore(live.point_log||[],live.format,live.first_server);
   const names=[live.team1.map(id=>gp(id).name).join(" & "),live.team2.map(id=>gp(id).name).join(" & ")];
   return(
     <div className="scr sf">
@@ -995,6 +1115,9 @@ select option{background:var(--card2);}
 .lv-grid{background:var(--card);border:1px solid var(--bd);border-radius:var(--rad);padding:14px;margin-bottom:14px;}
 .lv-hd{display:grid;grid-template-columns:1fr 48px 48px 62px;gap:4px;font-size:10px;color:var(--mt);text-transform:uppercase;letter-spacing:1px;text-align:center;margin-bottom:6px;}
 .lv-hd span:first-child{text-align:left;}
+.lv-srv{margin-left:6px;font-size:13px;flex-shrink:0;animation:lv-pulse 2s ease-in-out infinite;}
+@keyframes lv-pulse{0%,100%{opacity:1;}50%{opacity:.45;}}
+.lv-snd{background:transparent;border:1px solid var(--bd);border-radius:8px;padding:2px 8px;cursor:pointer;font-size:13px;line-height:1.4;}
 .lv-row{display:grid;grid-template-columns:1fr 48px 48px 62px;gap:4px;align-items:center;padding:10px 4px;border-top:1px solid var(--bd);border-radius:8px;}
 .lv-nm{display:flex;align-items:center;gap:8px;font-size:14px;font-weight:600;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .lv-v{font-family:'Bebas Neue',sans-serif;font-size:26px;text-align:center;color:var(--t);}
@@ -1017,6 +1140,14 @@ select option{background:var(--card2);}
 .lv-gridb .lv-v{font-size:44px;}
 .lv-gridb .lv-pt{font-size:58px;}
 .lv-gridb .lv-fin{font-size:22px;}
+
+/* ── Watch copy rows ── */
+.wrow{display:flex;align-items:center;gap:10px;background:var(--card2);border:1px solid var(--bd);border-radius:8px;padding:9px 12px;margin-bottom:7px;}
+.wri{flex:1;min-width:0;}
+.wrl{font-size:10px;color:var(--mt);letter-spacing:.5px;text-transform:uppercase;margin-bottom:2px;}
+.wrv{font-size:11px;font-family:monospace;color:var(--t);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.wrc{flex-shrink:0;padding:6px 12px;border-radius:8px;border:1px solid var(--bd);background:transparent;color:var(--t);font-size:11px;font-weight:600;cursor:pointer;font-family:'Outfit',sans-serif;min-width:76px;}
+.wrc.wrok{border-color:var(--g);color:var(--g);}
 
 /* ── Theme picker ── */
 .theme-card{display:flex;align-items:center;gap:14px;padding:13px 14px;background:var(--card);border:2px solid var(--bd);border-radius:var(--rad);cursor:pointer;width:100%;transition:border-color .15s;}
