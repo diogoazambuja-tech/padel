@@ -657,26 +657,34 @@ const PTLBL=["0","15","30","40","AD"];
 
 // Deriva o resultado completo reproduzindo o log de pontos (0 = eq.1, 1 = eq.2).
 // Desfazer = remover o último ponto do log. Melhor de 3 sets, tie-break a 6-6.
+// O log aceita 0/1 (ponto da equipa) e marcadores 2/3 ("equipa 1/2 serve"),
+// colocados em campo no início do jogo e de cada set. firstServer cobre jogos
+// antigos criados com seletor. O serviço alterna a cada jogo a partir da última
+// âncora; no tie-break o 1.º ponto é de quem estava de servir, alternando a
+// cada 2. No fim de cada set a âncora é limpa → needsServe até novo marcador.
 function deriveScore(log,format,firstServer){
   let pts=[0,0],games=[0,0],sets=[],tb=false,tbp=[0,0],finished=false,winner=0;
-  // gp = jogos completados (o tie-break conta como um); a equipa a servir alterna
-  // a cada jogo. No tie-break o 1.º ponto é de quem estava de serviço e depois
-  // alterna a cada 2 pontos.
-  let gp=0,tbStart=0;
+  let gp=0,anchorTeam=firstServer!=null?firstServer:null,anchorGp=0,tbAnchor=null;
+  const serveNow=()=>anchorTeam==null?null:(anchorTeam+(gp-anchorGp))%2;
   const winGame=t=>{
     const o=1-t;pts=[0,0];games=[...games];games[t]++;gp++;
-    if(games[t]>=6&&games[t]-games[o]>=2){sets.push({t1:games[0],t2:games[1]});games=[0,0];}
-    else if(games[t]===6&&games[o]===6){tb=true;tbp=[0,0];tbStart=firstServer!=null?(firstServer+gp)%2:0;}
+    if(games[t]>=6&&games[t]-games[o]>=2){sets.push({t1:games[0],t2:games[1]});games=[0,0];anchorTeam=null;}
+    else if(games[t]===6&&games[o]===6){tb=true;tbp=[0,0];tbAnchor=serveNow()!=null?{team:serveNow(),at:0}:null;}
   };
-  for(const t of log){
+  for(const v of log){
     if(finished)break;
-    const o=1-t;
+    if(v===2||v===3){
+      if(tb)tbAnchor={team:v-2,at:tbp[0]+tbp[1]};
+      else{anchorTeam=v-2;anchorGp=gp;}
+      continue;
+    }
+    const t=v,o=1-t;
     if(tb){
       tbp=[...tbp];tbp[t]++;
       if(tbp[t]>=7&&tbp[t]-tbp[o]>=2){
         games=[...games];games[t]++;
         sets.push({t1:games[0],t2:games[1]});
-        games=[0,0];tb=false;tbp=[0,0];gp++;
+        games=[0,0];tb=false;tbp=[0,0];gp++;anchorTeam=null;tbAnchor=null;
       }
     }else{
       pts=[...pts];
@@ -691,10 +699,12 @@ function deriveScore(log,format,firstServer){
   }
   const s1=sets.filter(s=>s.t1>s.t2).length,s2=sets.filter(s=>s.t2>s.t1).length;
   let serving=null;
-  if(firstServer!=null&&!finished){
-    serving=tb?(tbStart+Math.floor((tbp[0]+tbp[1]+1)/2))%2:(firstServer+gp)%2;
+  if(!finished){
+    if(tb)serving=tbAnchor==null?null:(tbAnchor.team+Math.floor((tbp[0]+tbp[1]-tbAnchor.at+1)/2))%2;
+    else serving=serveNow();
   }
-  return{pts,games,sets,tb,tbp,finished,winner,setsWon:[s1,s2],serving};
+  const needsServe=!finished&&serving==null;
+  return{pts,games,sets,tb,tbp,finished,winner,setsWon:[s1,s2],serving,needsServe};
 }
 
 // Voz para anúncio de pontos (Web Speech API, pt-PT)
@@ -716,6 +726,8 @@ function useAnnounce(live,sc,names,enabled){
     prev.current={len,sc};
     if(!enabled||p===null||len===p.len)return;
     if(len<p.len){speak("Correção");return;}
+    const last=(live.point_log||[])[len-1];
+    if(last===2||last===3){speak(`Serviço: ${names[last-2]}`);return;}
     if(sc.finished){speak(`Jogo, set e partida! Vitória de ${names[sc.winner-1]}`);return;}
     if(sc.sets.length>p.sc.sets.length){speak(`Set! ${sc.setsWon[0]} a ${sc.setsWon[1]} em sets`);return;}
     if(sc.tb&&!p.sc.tb){speak("Jogo! Seis iguais — tie-break");return;}
@@ -772,8 +784,15 @@ function LiveTab({players,campos,defaultCampo,onSaveGame}){
     try{await supabase.from('live_games').update({point_log:next}).eq('id',cur.id);}
     finally{pending.current--;}
   };
-  // Duplo toque acidental no mesmo botão de ponto (<350ms) é ignorado
-  const addPoint=t=>{const n=Date.now();if(n-tapGuard.current<350)return;tapGuard.current=n;mutateLog(log=>[...log,t]);};
+  // Duplo toque acidental (<350ms) é ignorado. Com o serviço por definir
+  // (início do jogo e de cada set), o toque marca quem serve, não um ponto.
+  const addPoint=t=>{
+    const n=Date.now();if(n-tapGuard.current<350)return;tapGuard.current=n;
+    const cur=liveRef.current;if(!cur)return;
+    const sc=deriveScore(cur.point_log||[],cur.format,cur.first_server);
+    if(sc.finished)return;
+    mutateLog(log=>[...log,sc.needsServe?2+t:t]);
+  };
   const undoPoint=()=>mutateLog(log=>log.slice(0,-1));
 
   const gp=id=>players.find(p=>p.id===id)||{id,name:"?",color:"#555"};
@@ -794,7 +813,8 @@ function LiveTab({players,campos,defaultCampo,onSaveGame}){
   },[live?.id]);
 
   const start=async cfg=>{
-    const row={id:uid(),date:today(),campo:cfg.campo,team1:cfg.team1,team2:cfg.team2,format:cfg.format,first_server:cfg.firstServer,point_log:[],status:'active'};
+    // first_server:null → quem serve define-se em campo com o 1.º toque
+    const row={id:uid(),date:today(),campo:cfg.campo,team1:cfg.team1,team2:cfg.team2,format:cfg.format,first_server:null,point_log:[],status:'active'};
     let{data,error}=await supabase.from('live_games').insert(row).select().single();
     if(error){
       // BD ainda sem a coluna first_server (migração 005 por aplicar) — insere sem ela
@@ -843,7 +863,6 @@ function LiveSetup({players,campos,defaultCampo,onStart}){
   const[team2,setTeam2]=useState(["",""]);
   const[campo,setCampo]=useState(defaultCampo||"");
   const[format,setFormat]=useState("golden");
-  const[srv,setSrv]=useState(0);
   const[copied,setCopied]=useState(false);
   const allSel=[...team1,...team2].filter(Boolean);
   const can=team1.every(Boolean)&&team2.every(Boolean);
@@ -882,15 +901,7 @@ function LiveSetup({players,campos,defaultCampo,onStart}){
           <button className={`catb${format==='advantage'?' caton':''}`} style={{flex:1,padding:10,fontSize:12}} onClick={()=>setFormat('advantage')}>♾️ Vantagens</button>
         </div>
       </div>
-      <div className="fg"><label className="fl">🎾 Quem serve primeiro</label>
-        <div style={{display:'flex',gap:8}}>
-          {[0,1].map(t=>{
-            const tn=[team1,team2][t].filter(Boolean).map(id=>players.find(p=>p.id===id)?.name?.split(" ")[0]).join(" & ");
-            return(<button key={t} className={`catb${srv===t?' caton':''}`} style={{flex:1,padding:10,fontSize:12}} onClick={()=>setSrv(t)}>{t===0?'🟢':'🟠'} {tn||`Equipa ${t+1}`}</button>);
-          })}
-        </div>
-      </div>
-      <button className="btns" style={{width:'100%',padding:16,fontSize:16}} disabled={!can} onClick={()=>onStart({team1,team2,campo,format,firstServer:srv})}>🔴 Iniciar Jogo</button>
+      <button className="btns" style={{width:'100%',padding:16,fontSize:16}} disabled={!can} onClick={()=>onStart({team1,team2,campo,format})}>🔴 Iniciar Jogo</button>
       <button className="aset" style={{marginTop:10}} onClick={shareRemote}>{copied?"✓ Link copiado!":"📤 Partilhar link do comando de pontos"}</button>
       <div style={{fontSize:11,color:'var(--mt)',marginTop:12,textAlign:'center'}}>Melhor de 3 sets · tie-break a 6-6<br/>O comando funciona em qualquer telemóvel — e no Apple Watch via link aberto no iMessage</div>
     </div>
@@ -921,6 +932,7 @@ function ScoreGrid({live,gp,big}){
       ))}
       {sc.sets.length>0&&<div className="lv-sets">{sc.sets.map(s=>`${s.t1}-${s.t2}`).join("  ·  ")}</div>}
       {sc.tb&&<div className="lv-tbk">TIE-BREAK</div>}
+      {sc.needsServe&&<div className="lv-tbk">🎾 A DEFINIR QUEM SERVE — TOCA NA EQUIPA</div>}
       {sc.finished&&<div className="lv-fin">🏆 {names[sc.winner-1]} venceu!</div>}
     </div>
   );
@@ -949,8 +961,11 @@ function LiveCtrl({live,gp,onPoint,onUndo,onFinish,onCancel,onBack}){
       <ScoreGrid live={live} gp={gp}/>
       {!sc.finished&&(
         <div className="lv-taps">
-          <button className="lv-tap lv-t1" onClick={()=>onPoint(0)}>+ Ponto<br/><span className="lv-tapn">{names[0]}</span></button>
-          <button className="lv-tap lv-t2" onClick={()=>onPoint(1)}>+ Ponto<br/><span className="lv-tapn">{names[1]}</span></button>
+          {[0,1].map(t=>(
+            <button key={t} className={`lv-tap lv-t${t+1}`} onClick={()=>onPoint(t)}>
+              {sc.needsServe?"🎾 Servem primeiro":"+ Ponto"}<br/><span className="lv-tapn">{names[t]}</span>
+            </button>
+          ))}
         </div>
       )}
       <div style={{display:'flex',gap:8,marginTop:14}}>
