@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useRef } from "react";
-import { supabase } from "./supabase.js";
+import { supabase, supabaseUrl, supabaseKey } from "./supabase.js";
 
 const COLORS = ["#00e676","#ff6b35","#00b0ff","#e040fb","#ffea00","#ff4444","#00bfa5","#ff6d00","#f472b6","#a78bfa"];
 const uid = () => Math.random().toString(36).slice(2,10);
@@ -431,13 +431,14 @@ function ConfigTab({players,games,campos,setCampos,defaultCampo,setDefaultCampo,
     <div className="scr">
       <div className="ft">Configurações</div>
       <div className="cscr" style={{marginBottom:20}}>
-        {[{id:"jogadores",l:"👥 Jogadores"},{id:"campos",l:"📍 Campos"},{id:"tema",l:"🎨 Tema"},{id:"jogos",l:"🎾 Jogos"}].map(s=>(
+        {[{id:"jogadores",l:"👥 Jogadores"},{id:"campos",l:"📍 Campos"},{id:"tema",l:"🎨 Tema"},{id:"watch",l:"⌚ Watch"},{id:"jogos",l:"🎾 Jogos"}].map(s=>(
           <button key={s.id} className={`catb${sec===s.id?" caton":""}`} onClick={()=>setSec(s.id)}>{s.l}</button>
         ))}
       </div>
       {sec==="jogadores"&&<PlayersSection players={players} games={games} onAdd={onAddPlayer} onSave={onSavePlayer} onDel={onDelPlayer}/>}
       {sec==="campos"&&<CamposSection campos={campos} setCampos={setCampos} defaultCampo={defaultCampo} setDefaultCampo={setDefaultCampo}/>}
       {sec==="tema"&&<ThemeSection theme={theme} setTheme={setTheme}/>}
+      {sec==="watch"&&<WatchSection/>}
       {sec==="jogos"&&<GamesAdminSection games={games} players={players} onEdit={onEditGame} onDel={onDelGame}/>}
     </div>
   );
@@ -458,6 +459,53 @@ function ThemeSection({theme,setTheme}){
             <span style={{color:theme===t.id?'var(--g)':'var(--bd)',fontSize:20,flexShrink:0}}>{theme===t.id?"✓":"○"}</span>
           </button>
         ))}
+      </div>
+    </div>
+  );
+}
+
+function CopyRow({label,value}){
+  const[ok,setOk]=useState(false);
+  const copy=async()=>{
+    try{await navigator.clipboard.writeText(value);setOk(true);setTimeout(()=>setOk(false),1600);}
+    catch{prompt("Copiar manualmente:",value);}
+  };
+  return(
+    <div className="wrow">
+      <div className="wri"><div className="wrl">{label}</div><div className="wrv">{value}</div></div>
+      <button className={`wrc${ok?" wrok":""}`} onClick={copy}>{ok?"✓ Copiado":"Copiar"}</button>
+    </div>
+  );
+}
+
+function WatchSection(){
+  return(
+    <div>
+      <div style={{fontSize:12,color:'var(--mt)',marginBottom:16,lineHeight:1.5}}>
+        Cria os atalhos no iPhone (app <b style={{color:'var(--t)'}}>Atalhos</b>) com a ação
+        <b style={{color:'var(--t)'}}> "Obter conteúdos de URL"</b>, método <b style={{color:'var(--t)'}}>POST</b>,
+        e cola os valores abaixo. Ativa <b style={{color:'var(--t)'}}>"Mostrar no Apple Watch"</b> em cada atalho.
+        Depois partilha-os com o grupo por link iCloud (manter premido → Partilhar).
+      </div>
+      <div className="fg"><label className="fl">🟢 Atalho — Ponto Equipa 1</label>
+        <CopyRow label="URL" value={`${supabaseUrl}/rest/v1/rpc/add_live_point`}/>
+        <CopyRow label="Corpo do pedido (JSON)" value={'{"team": 0}'}/>
+      </div>
+      <div className="fg"><label className="fl">🟠 Atalho — Ponto Equipa 2</label>
+        <CopyRow label="URL (igual ao anterior)" value={`${supabaseUrl}/rest/v1/rpc/add_live_point`}/>
+        <CopyRow label="Corpo do pedido (JSON)" value={'{"team": 1}'}/>
+      </div>
+      <div className="fg"><label className="fl">↩️ Atalho — Desfazer (opcional)</label>
+        <CopyRow label="URL" value={`${supabaseUrl}/rest/v1/rpc/undo_live_point`}/>
+        <CopyRow label="Corpo do pedido (JSON)" value={"{}"}/>
+      </div>
+      <div className="fg"><label className="fl">🔑 Cabeçalhos (iguais nos 3 atalhos)</label>
+        <CopyRow label="apikey" value={supabaseKey||""}/>
+        <CopyRow label="Content-Type" value="application/json"/>
+      </div>
+      <div style={{fontSize:11,color:'var(--mt)',lineHeight:1.5}}>
+        Os atalhos marcam pontos no jogo ativo do separador 🔴 Live. Sem jogo ativo não fazem nada.
+        A chave é a pública da app (anon) — pode ser partilhada com o grupo.
       </div>
     </div>
   );
@@ -1092,6 +1140,14 @@ select option{background:var(--card2);}
 .lv-gridb .lv-v{font-size:44px;}
 .lv-gridb .lv-pt{font-size:58px;}
 .lv-gridb .lv-fin{font-size:22px;}
+
+/* ── Watch copy rows ── */
+.wrow{display:flex;align-items:center;gap:10px;background:var(--card2);border:1px solid var(--bd);border-radius:8px;padding:9px 12px;margin-bottom:7px;}
+.wri{flex:1;min-width:0;}
+.wrl{font-size:10px;color:var(--mt);letter-spacing:.5px;text-transform:uppercase;margin-bottom:2px;}
+.wrv{font-size:11px;font-family:monospace;color:var(--t);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.wrc{flex-shrink:0;padding:6px 12px;border-radius:8px;border:1px solid var(--bd);background:transparent;color:var(--t);font-size:11px;font-weight:600;cursor:pointer;font-family:'Outfit',sans-serif;min-width:76px;}
+.wrc.wrok{border-color:var(--g);color:var(--g);}
 
 /* ── Theme picker ── */
 .theme-card{display:flex;align-items:center;gap:14px;padding:13px 14px;background:var(--card);border:2px solid var(--bd);border-radius:var(--rad);cursor:pointer;width:100%;transition:border-color .15s;}
