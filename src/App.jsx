@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { supabase } from "./supabase.js";
 
 const COLORS = ["#00e676","#ff6b35","#00b0ff","#e040fb","#ffea00","#ff4444","#00bfa5","#ff6d00","#f472b6","#a78bfa"];
@@ -591,12 +591,16 @@ const PTLBL=["0","15","30","40","AD"];
 
 // Deriva o resultado completo reproduzindo o log de pontos (0 = eq.1, 1 = eq.2).
 // Desfazer = remover o último ponto do log. Melhor de 3 sets, tie-break a 6-6.
-function deriveScore(log,format){
+function deriveScore(log,format,firstServer){
   let pts=[0,0],games=[0,0],sets=[],tb=false,tbp=[0,0],finished=false,winner=0;
+  // gp = jogos completados (o tie-break conta como um); a equipa a servir alterna
+  // a cada jogo. No tie-break o 1.º ponto é de quem estava de serviço e depois
+  // alterna a cada 2 pontos.
+  let gp=0,tbStart=0;
   const winGame=t=>{
-    const o=1-t;pts=[0,0];games=[...games];games[t]++;
+    const o=1-t;pts=[0,0];games=[...games];games[t]++;gp++;
     if(games[t]>=6&&games[t]-games[o]>=2){sets.push({t1:games[0],t2:games[1]});games=[0,0];}
-    else if(games[t]===6&&games[o]===6){tb=true;tbp=[0,0];}
+    else if(games[t]===6&&games[o]===6){tb=true;tbp=[0,0];tbStart=firstServer!=null?(firstServer+gp)%2:0;}
   };
   for(const t of log){
     if(finished)break;
@@ -606,7 +610,7 @@ function deriveScore(log,format){
       if(tbp[t]>=7&&tbp[t]-tbp[o]>=2){
         games=[...games];games[t]++;
         sets.push({t1:games[0],t2:games[1]});
-        games=[0,0];tb=false;tbp=[0,0];
+        games=[0,0];tb=false;tbp=[0,0];gp++;
       }
     }else{
       pts=[...pts];
@@ -620,7 +624,44 @@ function deriveScore(log,format){
     if(s1>=2||s2>=2){finished=true;winner=s1>s2?1:2;}
   }
   const s1=sets.filter(s=>s.t1>s.t2).length,s2=sets.filter(s=>s.t2>s.t1).length;
-  return{pts,games,sets,tb,tbp,finished,winner,setsWon:[s1,s2]};
+  let serving=null;
+  if(firstServer!=null&&!finished){
+    serving=tb?(tbStart+Math.floor((tbp[0]+tbp[1]+1)/2))%2:(firstServer+gp)%2;
+  }
+  return{pts,games,sets,tb,tbp,finished,winner,setsWon:[s1,s2],serving};
+}
+
+// Voz para anúncio de pontos (Web Speech API, pt-PT)
+const PTSAY=["zero","quinze","trinta","quarenta"];
+function speak(txt){
+  try{
+    if(!('speechSynthesis'in window))return;
+    const u=new SpeechSynthesisUtterance(txt);
+    u.lang='pt-PT';u.rate=1.05;
+    window.speechSynthesis.cancel();
+    window.speechSynthesis.speak(u);
+  }catch{}
+}
+function useAnnounce(live,sc,names,enabled){
+  const prev=useRef(null);
+  useEffect(()=>{
+    const len=(live.point_log||[]).length;
+    const p=prev.current;
+    prev.current={len,sc};
+    if(!enabled||p===null||len===p.len)return;
+    if(len<p.len){speak("Correção");return;}
+    if(sc.finished){speak(`Jogo, set e partida! Vitória de ${names[sc.winner-1]}`);return;}
+    if(sc.sets.length>p.sc.sets.length){speak(`Set! ${sc.setsWon[0]} a ${sc.setsWon[1]} em sets`);return;}
+    if(sc.tb&&!p.sc.tb){speak("Jogo! Seis iguais — tie-break");return;}
+    if(sc.games[0]!==p.sc.games[0]||sc.games[1]!==p.sc.games[1]){speak(`Jogo! ${sc.games[0]} a ${sc.games[1]}`);return;}
+    if(sc.tb){speak(`${sc.tbp[0]}, ${sc.tbp[1]}`);return;}
+    const[a,b]=sc.pts;
+    if(a===4){speak(`Vantagem ${names[0]}`);return;}
+    if(b===4){speak(`Vantagem ${names[1]}`);return;}
+    if(a===3&&b===3){speak(live.format==='golden'?"Quarenta iguais — ponto de ouro!":"Quarenta iguais");return;}
+    if(a===b){speak(`${PTSAY[a]} iguais`);return;}
+    speak(`${PTSAY[a]}, ${PTSAY[b]}`);
+  },[live.point_log,enabled]);
 }
 
 function LiveTab({players,campos,defaultCampo,onSaveGame}){
@@ -648,8 +689,13 @@ function LiveTab({players,campos,defaultCampo,onSaveGame}){
   const gp=id=>players.find(p=>p.id===id)||{id,name:"?",color:"#555"};
 
   const start=async cfg=>{
-    const row={id:uid(),date:today(),campo:cfg.campo,team1:cfg.team1,team2:cfg.team2,format:cfg.format,point_log:[],status:'active'};
-    const{data}=await supabase.from('live_games').insert(row).select().single();
+    const row={id:uid(),date:today(),campo:cfg.campo,team1:cfg.team1,team2:cfg.team2,format:cfg.format,first_server:cfg.firstServer,point_log:[],status:'active'};
+    let{data,error}=await supabase.from('live_games').insert(row).select().single();
+    if(error){
+      // BD ainda sem a coluna first_server (migração 005 por aplicar) — insere sem ela
+      const{first_server,...semSrv}=row;
+      ({data}=await supabase.from('live_games').insert(semSrv).select().single());
+    }
     setLive(data||row);setView("ctrl");
   };
 
@@ -697,6 +743,7 @@ function LiveSetup({players,campos,defaultCampo,onStart}){
   const[team2,setTeam2]=useState(["",""]);
   const[campo,setCampo]=useState(defaultCampo||"");
   const[format,setFormat]=useState("golden");
+  const[srv,setSrv]=useState(0);
   const allSel=[...team1,...team2].filter(Boolean);
   const can=team1.every(Boolean)&&team2.every(Boolean);
   const setT=(setter,arr,i,v)=>setter(arr.map((x,j)=>j===i?v:x));
@@ -727,22 +774,37 @@ function LiveSetup({players,campos,defaultCampo,onStart}){
           <button className={`catb${format==='advantage'?' caton':''}`} style={{flex:1,padding:10,fontSize:12}} onClick={()=>setFormat('advantage')}>♾️ Vantagens</button>
         </div>
       </div>
-      <button className="btns" style={{width:'100%',padding:16,fontSize:16}} disabled={!can} onClick={()=>onStart({team1,team2,campo,format})}>🔴 Iniciar Jogo</button>
+      <div className="fg"><label className="fl">🎾 Quem serve primeiro</label>
+        <div style={{display:'flex',gap:8}}>
+          {[0,1].map(t=>{
+            const tn=[team1,team2][t].filter(Boolean).map(id=>players.find(p=>p.id===id)?.name?.split(" ")[0]).join(" & ");
+            return(<button key={t} className={`catb${srv===t?' caton':''}`} style={{flex:1,padding:10,fontSize:12}} onClick={()=>setSrv(t)}>{t===0?'🟢':'🟠'} {tn||`Equipa ${t+1}`}</button>);
+          })}
+        </div>
+      </div>
+      <button className="btns" style={{width:'100%',padding:16,fontSize:16}} disabled={!can} onClick={()=>onStart({team1,team2,campo,format,firstServer:srv})}>🔴 Iniciar Jogo</button>
       <div style={{fontSize:11,color:'var(--mt)',marginTop:12,textAlign:'center'}}>Melhor de 3 sets · tie-break a 6-6</div>
     </div>
   );
 }
 
 function ScoreGrid({live,gp,big}){
-  const sc=deriveScore(live.point_log||[],live.format);
+  const sc=deriveScore(live.point_log||[],live.format,live.first_server);
   const names=[live.team1.map(id=>gp(id).name).join(" & "),live.team2.map(id=>gp(id).name).join(" & ")];
   const colors=[live.team1.map(id=>gp(id).color),live.team2.map(id=>gp(id).color)];
+  const[sound,setSound]=useState(()=>localStorage.getItem('padel_sound')==='1');
+  const toggleSound=e=>{
+    e.stopPropagation(); // o placar full-screen fecha ao tocar; o botão não deve fechar
+    const v=!sound;setSound(v);localStorage.setItem('padel_sound',v?'1':'0');
+    if(v)speak("Som ativado");else window.speechSynthesis?.cancel();
+  };
+  useAnnounce(live,sc,names,sound);
   return(
     <div className={`lv-grid${big?' lv-gridb':''}`}>
-      <div className="lv-hd"><span/><span>Sets</span><span>Jogos</span><span>Pontos</span></div>
+      <div className="lv-hd"><span><button className="lv-snd" title="Anúncio de voz" onClick={toggleSound}>{sound?'🔊':'🔇'}</button></span><span>Sets</span><span>Jogos</span><span>Pontos</span></div>
       {[0,1].map(t=>(
         <div key={t} className={`lv-row${sc.finished&&sc.winner===t+1?' lv-win':''}`}>
-          <span className="lv-nm"><span className="gds">{colors[t].map((c,i)=><span key={i} className="dot" style={{background:c}}/>)}</span>{names[t]}</span>
+          <span className="lv-nm"><span className="gds">{colors[t].map((c,i)=><span key={i} className="dot" style={{background:c}}/>)}</span>{names[t]}{sc.serving===t&&<span className="lv-srv" title="A servir">🎾</span>}</span>
           <span className="lv-v">{sc.setsWon[t]}</span>
           <span className="lv-v">{sc.games[t]}</span>
           <span className="lv-v lv-pt">{sc.tb?sc.tbp[t]:PTLBL[sc.pts[t]]}</span>
@@ -756,7 +818,7 @@ function ScoreGrid({live,gp,big}){
 }
 
 function LiveCtrl({live,gp,onPoint,onUndo,onFinish,onCancel,onBack}){
-  const sc=deriveScore(live.point_log||[],live.format);
+  const sc=deriveScore(live.point_log||[],live.format,live.first_server);
   const names=[live.team1.map(id=>gp(id).name).join(" & "),live.team2.map(id=>gp(id).name).join(" & ")];
   return(
     <div className="scr sf">
@@ -1005,6 +1067,9 @@ select option{background:var(--card2);}
 .lv-grid{background:var(--card);border:1px solid var(--bd);border-radius:var(--rad);padding:14px;margin-bottom:14px;}
 .lv-hd{display:grid;grid-template-columns:1fr 48px 48px 62px;gap:4px;font-size:10px;color:var(--mt);text-transform:uppercase;letter-spacing:1px;text-align:center;margin-bottom:6px;}
 .lv-hd span:first-child{text-align:left;}
+.lv-srv{margin-left:6px;font-size:13px;flex-shrink:0;animation:lv-pulse 2s ease-in-out infinite;}
+@keyframes lv-pulse{0%,100%{opacity:1;}50%{opacity:.45;}}
+.lv-snd{background:transparent;border:1px solid var(--bd);border-radius:8px;padding:2px 8px;cursor:pointer;font-size:13px;line-height:1.4;}
 .lv-row{display:grid;grid-template-columns:1fr 48px 48px 62px;gap:4px;align-items:center;padding:10px 4px;border-top:1px solid var(--bd);border-radius:8px;}
 .lv-nm{display:flex;align-items:center;gap:8px;font-size:14px;font-weight:600;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .lv-v{font-family:'Bebas Neue',sans-serif;font-size:26px;text-align:center;color:var(--t);}
