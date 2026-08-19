@@ -512,6 +512,15 @@ function WatchSection(){
           <li>No ⓘ do atalho ativa <b>"Mostrar no Apple Watch"</b></li>
         </ol>
       </div>
+      <div className="fg"><label className="fl">📟 Página-comando (sem atalhos)</label>
+        <CopyRow label="Dois botões grandes — abre em qualquer browser" value={`${origin}/remote.html`}/>
+        <div style={{fontSize:11,color:'var(--mt)',lineHeight:1.5,marginTop:4}}>
+          Truque Apple Watch: envia este link para ti por <b style={{color:'var(--t)'}}>iMessage</b> e
+          abre-o a partir da Mensagens no relógio — o Watch mostra a página com os botões, sem atalhos.
+          Também serve para comandos Bluetooth: com o marcador aberto, as teclas ←/1 e →/2 marcam pontos
+          e Backspace/↓ desfaz.
+        </div>
+      </div>
       <div style={{fontSize:11,color:'var(--mt)',lineHeight:1.5}}>
         Para o grupo: mantém o atalho premido → Partilhar → link iCloud → WhatsApp.
         Quem recebe instala com um toque. Sem jogo ativo os URLs não fazem nada.
@@ -744,6 +753,22 @@ function LiveTab({players,campos,defaultCampo,onSaveGame}){
   },[]);
 
   const gp=id=>players.find(p=>p.id===id)||{id,name:"?",color:"#555"};
+
+  // Comandos/clickers Bluetooth emparelhados com o dispositivo enviam teclas:
+  // ← ou 1 = ponto eq.1 · → ou 2 = ponto eq.2 · Backspace ou ↓ = desfazer
+  useEffect(()=>{
+    if(!live)return;
+    const h=e=>{
+      if(e.repeat)return;
+      if(e.target&&/^(INPUT|SELECT|TEXTAREA)$/.test(e.target.tagName))return;
+      const log=live.point_log||[];
+      if(e.key==='ArrowLeft'||e.key==='1'){e.preventDefault();pushLog([...log,0]);}
+      else if(e.key==='ArrowRight'||e.key==='2'){e.preventDefault();pushLog([...log,1]);}
+      else if(e.key==='Backspace'||e.key==='ArrowDown'){e.preventDefault();pushLog(log.slice(0,-1));}
+    };
+    window.addEventListener('keydown',h);
+    return()=>window.removeEventListener('keydown',h);
+  },[live]);
 
   const start=async cfg=>{
     const row={id:uid(),date:today(),campo:cfg.campo,team1:cfg.team1,team2:cfg.team2,format:cfg.format,first_server:cfg.firstServer,point_log:[],status:'active'};
