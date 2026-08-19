@@ -13,25 +13,48 @@ button{border:none;color:#fff;cursor:pointer;font-family:inherit;font-weight:700
 #t1{flex:1;background:#0a7d43;font-size:9vh;}
 #t2{flex:1;background:#b45414;font-size:9vh;}
 #undo{flex:0 0 16%;background:#1a2d47;font-size:4.5vh;font-weight:500;}
+#undo.arm{background:#8a1d1d;font-weight:700;}
 #msg{position:fixed;top:6px;left:0;right:0;text-align:center;color:#fff;font-size:4vh;text-shadow:0 1px 4px #000;pointer-events:none;}
 button:active{filter:brightness(1.3);}
 </style>
 </head>
 <body>
 <div id="msg"></div>
-<button id="t1" onclick="go('team=0')">🟢 Eq. 1</button>
-<button id="t2" onclick="go('team=1')">🟠 Eq. 2</button>
-<button id="undo" onclick="go('undo=1')">↩️ Desfazer</button>
+<button id="t1" onclick="point(0)">🟢 Eq. 1</button>
+<button id="t2" onclick="point(1)">🟠 Eq. 2</button>
+<button id="undo" onclick="undo()">↩️ Desfazer</button>
 <script>
-var busy=false;
-function go(q){
-  if(busy)return;busy=true;
-  var m=document.getElementById('msg');m.textContent='…';
+var busy=false,lastTap=0,armed=false,armTimer=null;
+function msg(t){document.getElementById('msg').textContent=t;}
+function send(q){
+  if(busy)return;busy=true;msg('…');
   fetch('/api/point?'+q)
     .then(function(r){return r.text();})
-    .then(function(t){m.textContent=t;})
-    .catch(function(){m.textContent='⚠️ Sem ligação';})
-    .finally(function(){setTimeout(function(){m.textContent='';busy=false;},900);});
+    .then(msg)
+    .catch(function(){msg('⚠️ Sem ligação');})
+    .finally(function(){setTimeout(function(){msg('');busy=false;},900);});
+}
+function point(t){
+  // Duplo toque acidental (<400ms) é ignorado
+  var n=Date.now();if(n-lastTap<400)return;lastTap=n;
+  disarm();send('team='+t);
+}
+function undo(){
+  // Correção em 2 toques: o 1.º arma (botão vermelho), o 2.º confirma
+  if(!armed){
+    armed=true;
+    document.getElementById('undo').classList.add('arm');
+    document.getElementById('undo').textContent='⚠️ Confirmar correção';
+    msg('Toca outra vez para corrigir');
+    armTimer=setTimeout(function(){disarm();msg('');},2500);
+    return;
+  }
+  disarm();send('undo=1');
+}
+function disarm(){
+  armed=false;clearTimeout(armTimer);
+  var u=document.getElementById('undo');
+  u.classList.remove('arm');u.textContent='↩️ Desfazer';
 }
 </script>
 </body>
