@@ -19,9 +19,9 @@ function calcWinner(sets){
   return a>b?1:b>a?2:0;
 }
 
-// Posições de jogo dos jogadores
-const POSICOES=[{id:"direita",l:"🫱 Direita"},{id:"esquerda",l:"🫲 Esquerda"},{id:"ambos",l:"🔁 Ambos"}];
-const posLabel=p=>({direita:"🫱",esquerda:"🫲"}[p]||"");
+// Posições de jogo: o LADO do campo em que o jogador joga (não a mão!)
+const POSICOES=[{id:"esquerda",l:"⬅️ Lado Esquerdo"},{id:"direita",l:"Lado Direito ➡️"},{id:"ambos",l:"🔁 Ambos"}];
+const posLabel=p=>({direita:"➡️",esquerda:"⬅️"}[p]||"");
 
 // Sorteio de equipas: mantém os selecionados, completa até 4 com aleatórios da
 // base, e escolhe o emparelhamento que respeita posições (cada equipa deve
@@ -923,7 +923,7 @@ function PlayersSection({players,games,onAdd,onSave,onDel}){
             </div>
           </div>
         );
-        return(<div key={p.id} className="pc"><div className="pcav" style={{background:p.color}}>{p.name[0].toUpperCase()}</div><div className="pci"><div className="pcn">{p.name} {posLabel(p.posicao)}</div><div className="pcs">{s.g} jogos · {s.w} vitórias{p.posicao&&p.posicao!=='ambos'?` · joga à ${p.posicao}`:''}</div></div><button className="pcd" title="Editar" onClick={()=>startEdit(p)}>✏️</button><button className="pcd" onClick={()=>onDel(p.id)}>✕</button></div>);
+        return(<div key={p.id} className="pc"><div className="pcav" style={{background:p.color}}>{p.name[0].toUpperCase()}</div><div className="pci"><div className="pcn">{p.name} {posLabel(p.posicao)}</div><div className="pcs">{s.g} jogos · {s.w} vitórias{p.posicao&&p.posicao!=='ambos'?` · lado ${p.posicao==='direita'?'direito':'esquerdo'}`:''}</div></div><button className="pcd" title="Editar" onClick={()=>startEdit(p)}>✏️</button><button className="pcd" onClick={()=>onDel(p.id)}>✕</button></div>);
       })}</div>
       <div className="fg" style={{marginTop:24}}>
         <label className="fl">➕ Adicionar Jogador</label>
