@@ -84,34 +84,6 @@ function calcElo(players,games){
   return R;
 }
 
-// Série temporal do Elo (uma amostra por jogo) para o gráfico de evolução
-function eloTimeline(players,games){
-  const R={};players.forEach(p=>{R[p.id]=1000;});
-  const snaps=[{date:null,R:{...R}}];
-  const upd=(t1,t2,won,K)=>{
-    t1=t1.filter(id=>R[id]!=null);t2=t2.filter(id=>R[id]!=null);
-    if(t1.length<1||t2.length<1)return;
-    const r1=t1.reduce((s,id)=>s+R[id],0)/t1.length,r2=t2.reduce((s,id)=>s+R[id],0)/t2.length;
-    const e1=1/(1+Math.pow(10,(r2-r1)/400));
-    const d=K*((won?1:0)-e1);
-    t1.forEach(id=>{R[id]+=d;});t2.forEach(id=>{R[id]-=d;});
-  };
-  [...games].sort((a,b)=>a.date.localeCompare(b.date)).forEach(g=>{
-    if(g.jogadoresFixos===false){
-      (g.sets||[]).forEach(s=>{
-        const t1v=+s.t1||0,t2v=+s.t2||0;
-        if(t1v===t2v)return;
-        upd((s.team1||[]).filter(Boolean),(s.team2||[]).filter(Boolean),t1v>t2v,16);
-      });
-    }else{
-      const w=calcWinner(g.sets);if(!w)return;
-      upd((g.team1||[]).filter(Boolean),(g.team2||[]).filter(Boolean),w===1,32);
-    }
-    snaps.push({date:g.date,R:{...R}});
-  });
-  return snaps;
-}
-
 const DEMO=[
   {id:"p1",name:"Diogo Azambuja",color:COLORS[0]},
   {id:"p2",name:"Filipe Cerqueira",color:COLORS[1]},
@@ -280,20 +252,16 @@ function CalTab({players,games,campos}){
   const resumoNoite=async()=>{
     const lastDate=[...games].sort((a,b)=>b.date.localeCompare(a.date))[0].date;
     const night=games.filter(g=>g.date===lastDate);
-    const nw={},nb={};
+    const nb={};
     const lines=night.map(g=>{
       const s1=(g.sets||[]).filter(s=>(+s.t1||0)>(+s.t2||0)).length;
       const s2=(g.sets||[]).filter(s=>(+s.t2||0)>(+s.t1||0)).length;
       Object.entries(g.beers||{}).forEach(([id,v])=>{if(+v>0)nb[id]=(nb[id]||0)+ +v;});
       if(g.jogadoresFixos===false)return`• ${(g.jogadores||[]).map(id=>gp(id).name.split(" ")[0]).join(", ")} — ${s1}-${s2} (rotativo)`;
-      const w=calcWinner(g.sets);
-      if(w)(w===1?g.team1:g.team2||[]).forEach(id=>nw[id]=(nw[id]||0)+1);
       return`• ${(g.team1||[]).map(id=>gp(id).name.split(" ")[0]).join(" & ")} ${s1}-${s2} ${(g.team2||[]).map(id=>gp(id).name.split(" ")[0]).join(" & ")}`;
     });
-    const mvpE=Object.entries(nw).sort((a,b)=>b[1]-a[1])[0];
     const campo=getCampo(night[0]?.campo);
     let text=`🎾 Padel — ${fmtDate(lastDate)}${campo?` 📍 ${campo}`:""}\n${lines.join("\n")}`;
-    if(mvpE)text+=`\n⭐ MVP: ${gp(mvpE[0]).name.split(" ")[0]} (${mvpE[1]}V)`;
     const bs=Object.entries(nb).map(([id,v])=>`${gp(id).name.split(" ")[0]} ${v}🍺`).join(" · ");
     if(bs)text+=`\n🍺 ${bs}`;
     if(navigator.share){try{await navigator.share({text});return;}catch{/* cancelado */}}
@@ -545,13 +513,8 @@ function StatsTab({players,games}){
   const[year,setYear]=useState("all");
   const filtered=useMemo(()=>year==="all"?games:games.filter(g=>g.date?.startsWith(year)),[games,year]);
   const st=useMemo(()=>calcStats(players,filtered),[players,filtered]);
-  const elo=useMemo(()=>{
-    const R=calcElo(players,filtered);
-    return players.map(p=>({id:p.id,v:Math.round(R[p.id]??1000)})).sort((a,b)=>b.v-a.v);
-  },[players,filtered]);
   const CATS=[
     {l:"🏆 Vitórias",d:st.wins},
-    {l:"🧠 Nível (Elo)",d:elo},
     {l:"📅 Mais Jogos",d:st.games},
     {l:"🛋️ Menos Jogos",d:st.least},
     {l:"🎾 Sets Ganhos",d:st.sets},
@@ -565,7 +528,7 @@ function StatsTab({players,games}){
     <div className="scr">
       <div className="ft">Rankings</div>
       <div className="cscr" style={{marginBottom:6}}>
-        {[{id:"rank",l:"🏆 Rankings"},{id:"duplas",l:"👥 Duplas"},{id:"h2h",l:"⚔️ Frente-a-frente"},{id:"evo",l:"📈 Evolução"},{id:"conq",l:"🎖️ Conquistas"}].map(v=>(
+        {[{id:"rank",l:"🏆 Rankings"},{id:"duplas",l:"👥 Duplas"},{id:"h2h",l:"⚔️ Frente-a-frente"},{id:"conq",l:"🎖️ Conquistas"}].map(v=>(
           <button key={v.id} className={`catb yr-btn${view===v.id?" caton":""}`} onClick={()=>setView(v.id)}>{v.l}</button>
         ))}
       </div>
@@ -581,7 +544,6 @@ function StatsTab({players,games}){
       </>)}
       {view==="duplas"&&<DuplasView players={players} games={filtered}/>}
       {view==="h2h"&&<H2HView players={players} games={filtered}/>}
-      {view==="evo"&&<EvoView players={players} games={filtered}/>}
       {view==="conq"&&<ConquistasView players={players} games={games}/>}
     </div>
   );
@@ -663,37 +625,7 @@ function H2HView({players,games}){
   );
 }
 
-/* Gráfico SVG da evolução do Elo ao longo dos jogos */
-function EvoView({players,games}){
-  const snaps=useMemo(()=>eloTimeline(players,games),[players,games]);
-  if(snaps.length<2)return(<div className="empty" style={{minHeight:120}}><span className="es">Ainda não há jogos suficientes</span></div>);
-  const W=600,H=240,PAD=8;
-  let mn=Infinity,mx=-Infinity;
-  snaps.forEach(s=>players.forEach(p=>{const v=s.R[p.id];if(v!=null){mn=Math.min(mn,v);mx=Math.max(mx,v);}}));
-  if(mx-mn<40){mx+=20;mn-=20;}
-  const X=i=>PAD+i*(W-2*PAD)/(snaps.length-1);
-  const Y=v=>H-PAD-(v-mn)*(H-2*PAD)/(mx-mn);
-  return(
-    <div style={{marginTop:8}}>
-      <svg viewBox={`0 0 ${W} ${H}`} style={{width:'100%',background:'var(--card)',borderRadius:12,border:'1px solid var(--bd)'}}>
-        <line x1={PAD} y1={Y(1000)} x2={W-PAD} y2={Y(1000)} stroke="var(--bd)" strokeDasharray="4 4"/>
-        {players.map(p=>(
-          <polyline key={p.id} fill="none" stroke={p.color} strokeWidth="2.5" strokeLinejoin="round"
-            points={snaps.map((s,i)=>`${X(i)},${Y(s.R[p.id]??1000)}`).join(" ")}/>
-        ))}
-      </svg>
-      <div style={{display:'flex',flexWrap:'wrap',gap:10,marginTop:10,justifyContent:'center'}}>
-        {players.map(p=>{
-          const last=snaps[snaps.length-1].R[p.id];
-          return(<span key={p.id} style={{display:'flex',alignItems:'center',gap:5,fontSize:11,color:'var(--t)'}}><span className="dot" style={{background:p.color}}/>{p.name.split(" ")[0]} <b style={{color:'var(--g)'}}>{Math.round(last??1000)}</b></span>);
-        })}
-      </div>
-      <div style={{fontSize:10,color:'var(--mt)',textAlign:'center',marginTop:6}}>Nível Elo jogo a jogo · linha tracejada = 1000 (início)</div>
-    </div>
-  );
-}
-
-/* Conquistas / badges + MVP da última noite */
+/* Conquistas / badges de motivação */
 function ConquistasView({players,games}){
   const st=useMemo(()=>calcStats(players,games),[players,games]);
   const R=useMemo(()=>calcElo(players,games),[players,games]);
@@ -708,18 +640,8 @@ function ConquistasView({players,games}){
     if(t1===7&&t2===6)(g.team1||[]).forEach(id=>tbWins[id]=(tbWins[id]||0)+1);
     if(t2===7&&t1===6)(g.team2||[]).forEach(id=>tbWins[id]=(tbWins[id]||0)+1);
   });});
-  // MVP da última noite
-  const lastDate=[...games].sort((a,b)=>b.date.localeCompare(a.date))[0]?.date;
-  let mvp=null;
-  if(lastDate){
-    const night=games.filter(g=>g.date===lastDate);
-    const nw={};
-    night.forEach(g=>{if(g.jogadoresFixos===false)return;const w=calcWinner(g.sets);if(!w)return;(w===1?g.team1:g.team2||[]).forEach(id=>nw[id]=(nw[id]||0)+1);});
-    mvp=topOf(nw);
-  }
   const badge=(id)=>{
     const list=[];
-    if(mvp===id)list.push("⭐ MVP da última noite");
     if(topOf(wins)===id)list.push("🏆 Rei das vitórias");
     if(topElo===id&&(gs[id]||0)>0)list.push("🐐 Nível máximo (Elo)");
     if(topOf(beers)===id)list.push("🍺 Patrocinador oficial");
@@ -732,15 +654,8 @@ function ConquistasView({players,games}){
     if(!list.length)list.push("🌱 A começar");
     return list;
   };
-  const mvpP=players.find(p=>p.id===mvp);
   return(
     <div style={{marginTop:8}}>
-      {mvpP&&(
-        <div className="gc" style={{padding:'14px 16px',marginBottom:14,borderColor:'var(--g)',textAlign:'center'}}>
-          <div style={{fontSize:11,color:'var(--mt)',letterSpacing:1,textTransform:'uppercase',marginBottom:4}}>⭐ MVP de {fmtDate(lastDate)}</div>
-          <div style={{fontSize:18,fontWeight:700,color:'var(--g)'}}>{mvpP.name}</div>
-        </div>
-      )}
       <div className="pg">
         {players.map(p=>(
           <div key={p.id} className="pc" style={{alignItems:'flex-start'}}>
