@@ -5,7 +5,7 @@
 const PTLBL = ['0', '15', '30', '40', 'AD'];
 
 export function derive(log, format, first) {
-  let pts = [0, 0], games = [0, 0], sets = [], tb = false, tbp = [0, 0], finished = false, winner = 0;
+  let pts = [0, 0], games = [0, 0], sets = [], tb = false, tbp = [0, 0];
   let gp = 0, anchorTeam = first != null ? first : null, anchorGp = 0, tbAnchor = null;
   const serveNow = () => anchorTeam == null ? null : (anchorTeam + (gp - anchorGp)) % 2;
   const winGame = t => {
@@ -14,7 +14,6 @@ export function derive(log, format, first) {
     else if (games[t] === 6 && games[o] === 6) { tb = true; tbp = [0, 0]; tbAnchor = serveNow() != null ? { team: serveNow(), at: 0 } : null; }
   };
   for (const v of log) {
-    if (finished) break;
     if (v === 2 || v === 3) {
       if (tb) tbAnchor = { team: v - 2, at: tbp[0] + tbp[1] };
       else { anchorTeam = v - 2; anchorGp = gp; }
@@ -36,18 +35,14 @@ export function derive(log, format, first) {
       else if (pts[t] === 3) winGame(t);
       else pts[t]++;
     }
-    const s1 = sets.filter(s => s[0] > s[1]).length, s2 = sets.filter(s => s[1] > s[0]).length;
-    if (s1 >= 2 || s2 >= 2) { finished = true; winner = s1 > s2 ? 1 : 2; }
   }
   const s1 = sets.filter(s => s[0] > s[1]).length, s2 = sets.filter(s => s[1] > s[0]).length;
   let serving = null;
-  if (!finished) {
-    if (tb) serving = tbAnchor == null ? null : (tbAnchor.team + Math.floor((tbp[0] + tbp[1] - tbAnchor.at + 1) / 2)) % 2;
-    else serving = serveNow();
-  }
-  const needsServe = !finished && serving == null;
+  if (tb) serving = tbAnchor == null ? null : (tbAnchor.team + Math.floor((tbp[0] + tbp[1] - tbAnchor.at + 1) / 2)) % 2;
+  else serving = serveNow();
+  const needsServe = serving == null;
   return {
-    setsWon: [s1, s2], games, tb, finished, winner, serving, needsServe,
+    setsWon: [s1, s2], games, tb, serving, needsServe,
     pts: [tb ? String(tbp[0]) : PTLBL[pts[0]], tb ? String(tbp[1]) : PTLBL[pts[1]]],
   };
 }

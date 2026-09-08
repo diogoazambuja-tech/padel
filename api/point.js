@@ -29,8 +29,6 @@ export default async function handler(req, res) {
     return res.status(200).send('↩️ Última entrada anulada');
   }
 
-  if (sc.finished) return res.status(200).send('🏆 A partida já terminou — guarda o jogo na app.');
-
   if (sc.needsServe) {
     // Marcador de serviço (2/3) em vez de ponto; escrita direta do log completo
     const next = [...(g.point_log || []), 2 + t];
