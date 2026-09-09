@@ -2,14 +2,14 @@
 <html lang="pt">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>Padel Remote</title>
 <style>
 /* Página-comando: cada botão identifica a equipa com nome, resultado e quem
    serve. Funciona no mini-browser do Apple Watch (link aberto em Mensagens),
    num telemóvel antigo, em qualquer lado. */
 html,body{margin:0;height:100%;}
-body{background:#07101f;font-family:-apple-system,'Outfit',sans-serif;display:flex;flex-direction:column;}
+body{background:#07101f;font-family:-apple-system,'Outfit',sans-serif;display:flex;flex-direction:column;height:100dvh;}
 #status{flex:0 0 auto;text-align:center;color:#8fa8c8;font-size:3vh;padding:1vh 2vw;min-height:3.4vh;background:#0d1a2e;border-bottom:1px solid #1a2d47;}
 button{border:none;color:#fff;cursor:pointer;font-family:inherit;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:.6vh;}
 #t1{flex:1;background:#0a7d43;}
@@ -20,6 +20,14 @@ button{border:none;color:#fff;cursor:pointer;font-family:inherit;display:flex;fl
 #undo{flex:0 0 13%;background:#1a2d47;font-size:4vh;font-weight:500;}
 #undo.arm{background:#8a1d1d;font-weight:700;}
 button:active{filter:brightness(1.3);}
+/* Apple Watch / ecrãs muito baixos: máximo espaço para os botões */
+@media (max-height:360px){
+  #status{display:none;}
+  .bl{font-size:6vh;}
+  .bs{font-size:9vh;}
+  .bsub{display:none;}
+  #undo{flex:0 0 11%;font-size:5vh;}
+}
 </style>
 </head>
 <body>
@@ -55,8 +63,7 @@ function refresh(){
       el('bv'+i).textContent=d.setsWon[i]+' · '+d.games[i]+' · '+d.pts[i];
       el('bu'+i).textContent=d.needsServe?'🎾 Servem primeiro':'+ Ponto';
     }
-    if(d.finished)msg('🏆 '+(d.names[d.winner-1]||'Equipa '+d.winner)+' venceu!');
-    else if(d.needsServe)msg('🎾 Quem serve? Toca na equipa que inicia');
+    if(d.needsServe)msg('🎾 Quem serve? Toca na equipa que inicia');
     else if(d.tb)msg('TIE-BREAK · sets · jogos · pontos');
     else msg('sets · jogos · pontos · 🎾 = a servir');
   }).catch(function(){msg('⚠️ Sem ligação');});

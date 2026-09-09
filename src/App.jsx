@@ -932,7 +932,9 @@ const PTLBL=["0","15","30","40","AD"];
 // âncora; no tie-break o 1.º ponto é de quem estava de servir, alternando a
 // cada 2. No fim de cada set a âncora é limpa → needsServe até novo marcador.
 function deriveScore(log,format,firstServer){
-  let pts=[0,0],games=[0,0],sets=[],tb=false,tbp=[0,0],finished=false,winner=0;
+  // Nota: o jogo nunca "termina" sozinho aos 2 sets — no fim de cada set o
+  // marcador pergunta se continua; fechar e gravar é sempre decisão humana.
+  let pts=[0,0],games=[0,0],sets=[],tb=false,tbp=[0,0];
   let gp=0,anchorTeam=firstServer!=null?firstServer:null,anchorGp=0,tbAnchor=null;
   const serveNow=()=>anchorTeam==null?null:(anchorTeam+(gp-anchorGp))%2;
   const winGame=t=>{
@@ -941,7 +943,6 @@ function deriveScore(log,format,firstServer){
     else if(games[t]===6&&games[o]===6){tb=true;tbp=[0,0];tbAnchor=serveNow()!=null?{team:serveNow(),at:0}:null;}
   };
   for(const v of log){
-    if(finished)break;
     if(v===2||v===3){
       if(tb)tbAnchor={team:v-2,at:tbp[0]+tbp[1]};
       else{anchorTeam=v-2;anchorGp=gp;}
@@ -963,17 +964,13 @@ function deriveScore(log,format,firstServer){
       else if(pts[t]===3)winGame(t);
       else pts[t]++;
     }
-    const s1=sets.filter(s=>s.t1>s.t2).length,s2=sets.filter(s=>s.t2>s.t1).length;
-    if(s1>=2||s2>=2){finished=true;winner=s1>s2?1:2;}
   }
   const s1=sets.filter(s=>s.t1>s.t2).length,s2=sets.filter(s=>s.t2>s.t1).length;
   let serving=null;
-  if(!finished){
-    if(tb)serving=tbAnchor==null?null:(tbAnchor.team+Math.floor((tbp[0]+tbp[1]-tbAnchor.at+1)/2))%2;
-    else serving=serveNow();
-  }
-  const needsServe=!finished&&serving==null;
-  return{pts,games,sets,tb,tbp,finished,winner,setsWon:[s1,s2],serving,needsServe};
+  if(tb)serving=tbAnchor==null?null:(tbAnchor.team+Math.floor((tbp[0]+tbp[1]-tbAnchor.at+1)/2))%2;
+  else serving=serveNow();
+  const needsServe=serving==null;
+  return{pts,games,sets,tb,tbp,setsWon:[s1,s2],serving,needsServe};
 }
 
 // Voz para anúncio de pontos (Web Speech API, pt-PT)
@@ -997,7 +994,6 @@ function useAnnounce(live,sc,names,enabled){
     if(len<p.len){speak("Correção");return;}
     const last=(live.point_log||[])[len-1];
     if(last===2||last===3){speak(`Serviço: ${names[last-2]}`);return;}
-    if(sc.finished){speak(`Jogo, set e partida! Vitória de ${names[sc.winner-1]}`);return;}
     if(sc.sets.length>p.sc.sets.length){speak(`Set! ${sc.setsWon[0]} a ${sc.setsWon[1]} em sets`);return;}
     if(sc.tb&&!p.sc.tb){speak("Jogo! Seis iguais — tie-break");return;}
     if(sc.games[0]!==p.sc.games[0]||sc.games[1]!==p.sc.games[1]){speak(`Jogo! ${sc.games[0]} a ${sc.games[1]}`);return;}
@@ -1059,7 +1055,6 @@ function LiveTab({players,campos,defaultCampo,ratings,onSaveGame}){
     const n=Date.now();if(n-tapGuard.current<350)return;tapGuard.current=n;
     const cur=liveRef.current;if(!cur)return;
     const sc=deriveScore(cur.point_log||[],cur.format,cur.first_server);
-    if(sc.finished)return;
     mutateLog(log=>[...log,sc.needsServe?2+t:t]);
   };
   const undoPoint=()=>mutateLog(log=>log.slice(0,-1));
@@ -1104,7 +1099,7 @@ function LiveTab({players,campos,defaultCampo,ratings,onSaveGame}){
     const sets=sc.sets.map(s=>({t1:String(s.t1),t2:String(s.t2)}));
     if(sc.games[0]>0||sc.games[1]>0)sets.push({t1:String(sc.games[0]),t2:String(sc.games[1])});
     if(!sets.length){alert("Ainda não há jogos marcados para guardar.");return;}
-    if(!sc.finished&&!confirm("A partida ainda não terminou. Guardar mesmo assim?"))return;
+    if(!confirm("Fechar e gravar o jogo?"))return;
     await supabase.from('live_games').update({status:'finished'}).eq('id',live.id);
     setLive(null);setView("lobby");
     onSaveGame({id:live.id,date:live.date,campo:live.campo||"",jogadoresFixos:true,team1:live.team1,team2:live.team2,jogadores:[],sets,beers:{}});
@@ -1194,10 +1189,9 @@ function ScoreGrid({live,gp,big}){
   // ⏱ duração do jogo (a partir de created_at), atualizada a cada 30s
   const[,tick]=useState(0);
   useEffect(()=>{
-    if(sc.finished)return;
     const t=setInterval(()=>tick(x=>x+1),30000);
     return()=>clearInterval(t);
-  },[sc.finished]);
+  },[]);
   const mins=live.created_at?Math.max(0,Math.round((Date.now()-new Date(live.created_at).getTime())/60000)):null;
   // 🔥 pontos consecutivos da mesma equipa (ignora marcadores de serviço)
   const ptsOnly=(live.point_log||[]).filter(v=>v===0||v===1);
@@ -1208,7 +1202,7 @@ function ScoreGrid({live,gp,big}){
     <div className={`lv-grid${big?' lv-gridb':''}`}>
       <div className="lv-hd"><span><button className="lv-snd" title="Anúncio de voz" onClick={toggleSound}>{sound?'🔊':'🔇'}</button></span><span>Sets</span><span>Jogos</span><span>Pontos</span></div>
       {[0,1].map(t=>(
-        <div key={t} className={`lv-row${sc.finished&&sc.winner===t+1?' lv-win':''}`}>
+        <div key={t} className="lv-row">
           <span className="lv-nm"><span className="gds">{colors[t].map((c,i)=><span key={i} className="dot" style={{background:c}}/>)}</span>{names[t]}{sc.serving===t&&<span className="lv-srv" title="A servir">🎾</span>}</span>
           <span className="lv-v">{sc.setsWon[t]}</span>
           <span className="lv-v">{sc.games[t]}</span>
@@ -1221,10 +1215,9 @@ function ScoreGrid({live,gp,big}){
       {(mins!=null||run>=3)&&(
         <div style={{display:'flex',justifyContent:'center',gap:14,fontSize:11,color:'var(--mt)',paddingTop:6}}>
           {mins!=null&&<span>⏱ {mins} min</span>}
-          {run>=3&&!sc.finished&&<span style={{color:'var(--g)'}}>🔥 {names[runTeam]?.split(" ")[0]||`Eq.${runTeam+1}`}: {run} pontos seguidos</span>}
+          {run>=3&&<span style={{color:'var(--g)'}}>🔥 {names[runTeam]?.split(" ")[0]||`Eq.${runTeam+1}`}: {run} pontos seguidos</span>}
         </div>
       )}
-      {sc.finished&&<div className="lv-fin">🏆 {names[sc.winner-1]} venceu!</div>}
     </div>
   );
 }
@@ -1243,6 +1236,11 @@ function LiveCtrl({live,gp,onPoint,onUndo,onFinish,onCancel,onBack}){
     setArmUndo(false);onUndo();
   };
   const names=[live.team1.map(id=>gp(id).name).join(" & "),live.team2.map(id=>gp(id).name).join(" & ")];
+  // Fim de set: no 2.º set pergunta se continua quando alguém fez 2-0;
+  // do 3.º set em diante pergunta sempre. contAt guarda o set já respondido.
+  const[contAt,setContAt]=useState(0);
+  const decided=sc.setsWon[0]>=2||sc.setsWon[1]>=2;
+  const askContinue=sc.needsServe&&contAt<sc.sets.length&&((sc.sets.length===2&&decided)||sc.sets.length>=3);
   return(
     <div className="scr sf">
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:14}}>
@@ -1250,7 +1248,16 @@ function LiveCtrl({live,gp,onPoint,onUndo,onFinish,onCancel,onBack}){
         <button className="abtn edit" onClick={onBack}>← Voltar</button>
       </div>
       <ScoreGrid live={live} gp={gp}/>
-      {!sc.finished&&(
+      {askContinue?(
+        <div className="gc" style={{padding:16,textAlign:'center',marginTop:4}}>
+          <div style={{fontSize:14,marginBottom:4}}>Set terminado — <b style={{color:'var(--g)'}}>{sc.setsWon[0]}–{sc.setsWon[1]}</b> em sets</div>
+          <div style={{fontSize:12,color:'var(--mt)',marginBottom:14}}>O jogo continua para um novo set?</div>
+          <div style={{display:'flex',gap:8}}>
+            <button className="btns" style={{flex:1,padding:12}} onClick={()=>setContAt(sc.sets.length)}>▶️ Sim, novo set</button>
+            <button className="btnc" style={{flex:1,padding:12}} onClick={onFinish}>💾 Fechar e gravar</button>
+          </div>
+        </div>
+      ):(
         <div className="lv-taps">
           {[0,1].map(t=>(
             <button key={t} className={`lv-tap lv-t${t+1}`} onClick={()=>onPoint(t)}>
